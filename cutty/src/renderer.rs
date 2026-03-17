@@ -303,20 +303,10 @@ fn paint_selection(
     cell_width: f32,
     cell_height: f32,
 ) {
-    let Some(range) = selection.range() else {
-        return;
-    };
-    let (rows, cols) = terminal.size();
-    for row in range.start.row..=range.end.row.min(rows.saturating_sub(1)) {
-        let start_col = if row == range.start.row {
-            range.start.col
-        } else {
-            0
-        };
-        let end_col = if row == range.end.row {
-            range.end.col.saturating_add(1).min(cols)
-        } else {
-            cols
+    let (rows, _) = terminal.size();
+    for row in 0..rows {
+        let Some((start_col, end_col)) = selection.cols_for_visible_row(terminal, row) else {
+            continue;
         };
 
         if end_col <= start_col {

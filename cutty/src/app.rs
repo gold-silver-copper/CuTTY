@@ -18,7 +18,7 @@ use crate::{
     parser::AnsiParser,
     pty::PtyProcess,
     renderer::GpuWindow,
-    selection::{CellPos, SelectionState, cell_at_position},
+    selection::{CellPos, SelectionState, StableCellPos, cell_at_position},
     terminal::{MouseTrackingMode, TerminalState},
     text::{PADDING_X, PADDING_Y, TextSystem},
 };
@@ -56,6 +56,13 @@ struct PendingGridResize {
     misses: u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResizeDecision {
+    Ignore,
+    Retry(PhysicalSize<u32>),
+    ApplyGrid(u16, u16),
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct ResizeController {
     pending_programmatic_resize: Option<PendingGridResize>,
@@ -76,36 +83,38 @@ impl ResizeController {
         });
     }
 
+    fn has_pending_resize(&self) -> bool {
+        self.pending_programmatic_resize.is_some()
+    }
+
     fn resolve_window_resize(
         &mut self,
         size: PhysicalSize<u32>,
         text: &TextSystem,
         current_grid: (u16, u16),
-    ) -> Option<(u16, u16)> {
+    ) -> ResizeDecision {
         let actual_grid = text.visible_grid(size);
 
         if let Some(pending) = self.pending_programmatic_resize.as_mut() {
             let target_grid = (pending.cols, pending.rows);
-            let close_to_target = window_sizes_close(size, pending.target_size);
             let target_grid_preserved = current_grid == target_grid;
 
-            if target_grid_preserved
-                && (close_to_target
-                    || actual_grid == target_grid
-                    || pending.misses < MAX_PENDING_RESIZE_EVENTS)
-            {
-                if close_to_target || actual_grid == target_grid {
+            if target_grid_preserved {
+                if actual_grid == target_grid {
                     self.pending_programmatic_resize = None;
-                } else {
-                    pending.misses += 1;
+                    return ResizeDecision::Ignore;
                 }
-                return None;
+
+                if pending.misses < MAX_PENDING_RESIZE_EVENTS {
+                    pending.misses += 1;
+                    return ResizeDecision::Retry(pending.target_size);
+                }
             }
 
             self.pending_programmatic_resize = None;
         }
 
-        Some(actual_grid)
+        ResizeDecision::ApplyGrid(actual_grid.0, actual_grid.1)
     }
 }
 
@@ -130,7 +139,6 @@ struct AppState {
     window: GpuWindow,
     parser: AnsiParser,
     terminal: TerminalState,
-    prev_terminal: Option<TerminalState>,
     pty: PtyProcess,
     text: TextSystem,
     resize_controller: ResizeController,
@@ -142,22 +150,35 @@ struct AppState {
     pressed_mouse_buttons: HashSet<MouseButton>,
     keyboard_selection_anchor: Option<usize>,
     keyboard_selection_focus: Option<usize>,
+    viewport_scroll_remainder: f64,
 }
 
 impl AppState {
     fn sync_to_window_size(&mut self) {
         let size = self.window.inner_size();
         let (current_rows, current_cols) = self.terminal.size();
-        if let Some((cols, rows)) = self.resize_controller.resolve_window_resize(
+        match self.resize_controller.resolve_window_resize(
             size,
             &self.text,
             (current_cols, current_rows),
         ) {
-            if cols != current_cols || rows != current_rows {
-                self.apply_terminal_size(cols, rows, false);
+            ResizeDecision::Ignore => {}
+            ResizeDecision::Retry(target_size) => {
+                self.window.request_inner_size(target_size);
+            }
+            ResizeDecision::ApplyGrid(cols, rows) => {
+                if cols != current_cols || rows != current_rows {
+                    self.apply_terminal_size(cols, rows, false);
+                }
             }
         }
         self.window.request_redraw();
+    }
+
+    fn reconcile_pending_zoom_resize(&mut self) {
+        if self.resize_controller.has_pending_resize() {
+            self.sync_to_window_size();
+        }
     }
 
     fn apply_terminal_size(&mut self, cols: u16, rows: u16, resize_window: bool) {
@@ -193,14 +214,15 @@ impl AppState {
     }
 
     fn paste_clipboard(&mut self) {
-        let Some(clipboard) = self.clipboard.as_mut() else {
-            return;
-        };
-        let Ok(text) = clipboard.get_text() else {
+        let Some(text) = self
+            .clipboard
+            .as_mut()
+            .and_then(|clipboard| clipboard.get_text().ok())
+        else {
             return;
         };
 
-        self.clear_selection();
+        self.prepare_for_terminal_input();
         let bytes = if self.terminal.bracketed_paste() {
             bracketed_paste_bytes(&text)
         } else {
@@ -223,8 +245,57 @@ impl AppState {
 
     fn clear_selection(&mut self) {
         self.selection.clear();
+        self.reset_keyboard_selection();
+    }
+
+    fn reset_keyboard_selection(&mut self) {
         self.keyboard_selection_anchor = None;
         self.keyboard_selection_focus = None;
+    }
+
+    fn prepare_for_terminal_input(&mut self) {
+        self.clear_selection();
+        self.viewport_scroll_remainder = 0.0;
+        if self.terminal.follow_viewport_bottom() {
+            self.window.request_redraw();
+        }
+    }
+
+    fn scroll_viewport_lines(&mut self, lines: i32) {
+        let changed = match lines.cmp(&0) {
+            std::cmp::Ordering::Greater => self
+                .terminal
+                .scroll_viewport_up(lines.min(u16::MAX as i32) as u16),
+            std::cmp::Ordering::Less => self
+                .terminal
+                .scroll_viewport_down(lines.unsigned_abs().min(u16::MAX as u32) as u16),
+            std::cmp::Ordering::Equal => false,
+        };
+
+        if changed {
+            self.reset_keyboard_selection();
+            self.window.request_redraw();
+        }
+    }
+
+    fn scroll_viewport_page(&mut self, direction: i32) {
+        let (rows, _) = self.terminal.size();
+        let lines = rows.saturating_sub(1).max(1) as i32;
+        self.scroll_viewport_lines(direction.saturating_mul(lines));
+    }
+
+    fn handle_local_mouse_wheel(&mut self, delta: MouseScrollDelta) {
+        let line_delta = viewport_scroll_lines_from_delta(delta, self.text.metrics().height);
+        if line_delta == 0.0 {
+            return;
+        }
+
+        self.viewport_scroll_remainder += line_delta;
+        let whole_lines = self.viewport_scroll_remainder.trunc() as i32;
+        if whole_lines != 0 {
+            self.viewport_scroll_remainder -= whole_lines as f64;
+            self.scroll_viewport_lines(whole_lines);
+        }
     }
 
     fn terminal_caret_index(&self) -> usize {
@@ -266,8 +337,9 @@ impl AppState {
             } else {
                 (next_focus, anchor)
             };
-            let selection_start = cell_pos_from_linear(start, cols);
-            let selection_end = cell_pos_from_linear(end.saturating_sub(1), cols);
+            let selection_start = stable_cell_pos_from_linear(&self.terminal, start, cols);
+            let selection_end =
+                stable_cell_pos_from_linear(&self.terminal, end.saturating_sub(1), cols);
             self.selection.set_range(selection_start, selection_end);
         }
 
@@ -279,6 +351,13 @@ impl AppState {
         position: winit::dpi::PhysicalPosition<f64>,
     ) -> Option<CellPos> {
         cell_at_position(position, self.text.metrics(), &self.terminal)
+    }
+
+    fn stable_cell_pos(&self, cell: CellPos) -> StableCellPos {
+        StableCellPos {
+            row: self.terminal.visible_row_to_stable_row(cell.row),
+            col: cell.col,
+        }
     }
 
     fn current_mouse_cell(&self) -> Option<CellPos> {
@@ -414,7 +493,6 @@ impl ApplicationHandler<UserEvent> for App {
             window,
             parser,
             terminal,
-            prev_terminal: None,
             pty,
             text,
             resize_controller: ResizeController::default(),
@@ -426,6 +504,7 @@ impl ApplicationHandler<UserEvent> for App {
             pressed_mouse_buttons: HashSet::new(),
             keyboard_selection_anchor: None,
             keyboard_selection_focus: None,
+            viewport_scroll_remainder: 0.0,
         });
 
         if let Some(state) = self.state.as_mut() {
@@ -466,7 +545,7 @@ impl ApplicationHandler<UserEvent> for App {
                     state.last_mouse_cell = Some(cell);
                     if state.terminal.mouse_reporting_enabled() {
                         state.report_mouse_motion(cell);
-                    } else if state.selection.update(cell) {
+                    } else if state.selection.update(state.stable_cell_pos(cell)) {
                         state.window.request_redraw();
                     }
                 }
@@ -485,7 +564,7 @@ impl ApplicationHandler<UserEvent> for App {
                                 if let Some(cell) = state.mouse_cell_at_position(position) {
                                     state.keyboard_selection_anchor = None;
                                     state.keyboard_selection_focus = None;
-                                    state.selection.begin(cell);
+                                    state.selection.begin(state.stable_cell_pos(cell));
                                     state.window.request_redraw();
                                 } else if state.selection.is_selected() {
                                     state.clear_selection();
@@ -504,6 +583,8 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseWheel { delta, .. } => {
                 if state.terminal.mouse_reporting_enabled() {
                     state.report_mouse_wheel(delta);
+                } else {
+                    state.handle_local_mouse_wheel(delta);
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -512,6 +593,13 @@ impl ApplicationHandler<UserEvent> for App {
                         selection_move_for_key(&event.logical_key, state.modifiers)
                     {
                         state.apply_keyboard_selection(selection_move);
+                        return;
+                    }
+
+                    if let Some(page_direction) =
+                        viewport_scroll_shortcut(&event.logical_key, state.modifiers)
+                    {
+                        state.scroll_viewport_page(page_direction);
                         return;
                     }
 
@@ -547,15 +635,14 @@ impl ApplicationHandler<UserEvent> for App {
                         state.modifiers,
                         state.terminal.application_cursor(),
                     ) {
-                        state.clear_selection();
+                        state.prepare_for_terminal_input();
                         state.pty.write_all(&bytes);
                     }
                 }
             }
             WindowEvent::RedrawRequested => {
                 state.drain_pty();
-                let dirty = state.terminal.dirty_rows(state.prev_terminal.as_ref());
-                state.text.sync_terminal_rows(&state.terminal, &dirty);
+                state.text.sync_terminal_rows(&state.terminal);
                 if let Err(error) =
                     state
                         .window
@@ -563,7 +650,6 @@ impl ApplicationHandler<UserEvent> for App {
                 {
                     eprintln!("{error:#}");
                 }
-                state.prev_terminal = Some(state.terminal.clone());
             }
             _ => {}
         }
@@ -581,7 +667,8 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(state) = self.state.as_ref() {
+        if let Some(state) = self.state.as_mut() {
+            state.reconcile_pending_zoom_resize();
             state.window.request_redraw();
         }
     }
@@ -634,6 +721,22 @@ fn selection_move_for_key(key: &Key, modifiers: ModifiersState) -> Option<Select
         Key::Named(NamedKey::ArrowDown) if !word_mode => Some(SelectionMove::Down),
         Key::Named(NamedKey::Home) if !word_mode => Some(SelectionMove::Home),
         Key::Named(NamedKey::End) if !word_mode => Some(SelectionMove::End),
+        _ => None,
+    }
+}
+
+fn viewport_scroll_shortcut(key: &Key, modifiers: ModifiersState) -> Option<i32> {
+    if !modifiers.shift_key()
+        || modifiers.control_key()
+        || modifiers.alt_key()
+        || modifiers.super_key()
+    {
+        return None;
+    }
+
+    match key.as_ref() {
+        Key::Named(NamedKey::PageUp) => Some(1),
+        Key::Named(NamedKey::PageDown) => Some(-1),
         _ => None,
     }
 }
@@ -875,6 +978,14 @@ fn cell_pos_from_linear(index: usize, cols: u16) -> CellPos {
     }
 }
 
+fn stable_cell_pos_from_linear(terminal: &TerminalState, index: usize, cols: u16) -> StableCellPos {
+    let cell = cell_pos_from_linear(index, cols);
+    StableCellPos {
+        row: terminal.visible_row_to_stable_row(cell.row),
+        col: cell.col,
+    }
+}
+
 fn window_size_for_grid(
     cols: u16,
     rows: u16,
@@ -885,8 +996,14 @@ fn window_size_for_grid(
     PhysicalSize::new(width, height)
 }
 
-fn window_sizes_close(left: PhysicalSize<u32>, right: PhysicalSize<u32>) -> bool {
-    left.width.abs_diff(right.width) <= 2 && left.height.abs_diff(right.height) <= 2
+fn viewport_scroll_lines_from_delta(delta: MouseScrollDelta, row_height: f32) -> f64 {
+    match delta {
+        MouseScrollDelta::LineDelta(_, y) => y as f64,
+        MouseScrollDelta::PixelDelta(position) if row_height > 0.0 => {
+            position.y / row_height as f64
+        }
+        MouseScrollDelta::PixelDelta(_) => 0.0,
+    }
 }
 
 fn matches_character(key: &Key, expected: &str) -> bool {
@@ -904,17 +1021,19 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{
-        MAX_PENDING_RESIZE_EVENTS, MouseTrackingMode, ResizeController, SelectionMove,
-        bracketed_paste_bytes, cell_pos_from_linear, encode_mouse_event, is_font_decrease_shortcut,
-        is_font_increase_shortcut, mouse_button_bytes, mouse_motion_bytes, move_selection_focus,
-        selection_move_for_key, uses_command_shortcuts, wheel_codes_from_delta,
+        MAX_PENDING_RESIZE_EVENTS, MouseTrackingMode, ResizeController, ResizeDecision,
+        SelectionMove, bracketed_paste_bytes, cell_pos_from_linear, encode_mouse_event,
+        is_font_decrease_shortcut, is_font_increase_shortcut, mouse_button_bytes,
+        mouse_motion_bytes, move_selection_focus, selection_move_for_key, uses_command_shortcuts,
+        viewport_scroll_lines_from_delta, viewport_scroll_shortcut, wheel_codes_from_delta,
         window_size_for_grid,
     };
     use crate::{
         config::FontConfig, selection::CellPos, terminal::TerminalState, text::TextSystem,
     };
     use winit::{
-        event::{ElementState, MouseButton},
+        dpi::PhysicalSize,
+        event::{ElementState, MouseButton, MouseScrollDelta},
         keyboard::{Key, ModifiersState, NamedKey},
     };
 
@@ -971,17 +1090,17 @@ mod tests {
 
         assert_eq!(
             controller.resolve_window_resize(size, &text, (80, 24)),
-            None
+            ResizeDecision::Ignore
         );
         assert_eq!(controller.pending_programmatic_resize, None);
     }
 
     #[test]
-    fn programmatic_resize_times_out_if_window_never_reaches_requested_size() {
+    fn programmatic_resize_retries_when_window_is_still_too_small_for_target_grid() {
         let font = FontConfig::default();
         let text = TextSystem::new(24, &font);
         let requested_size = window_size_for_grid(80, 24, text.metrics());
-        let actual_size = window_size_for_grid(81, 24, text.metrics());
+        let actual_size = PhysicalSize::new(requested_size.width, requested_size.height - 1);
         let mut controller = ResizeController::default();
 
         controller.request_grid_preserving_resize(80, 24, requested_size);
@@ -989,13 +1108,29 @@ mod tests {
         for _ in 0..MAX_PENDING_RESIZE_EVENTS {
             assert_eq!(
                 controller.resolve_window_resize(actual_size, &text, (80, 24)),
-                None
+                ResizeDecision::Retry(requested_size)
             );
+        }
+    }
+
+    #[test]
+    fn programmatic_resize_times_out_if_window_never_reaches_requested_size() {
+        let font = FontConfig::default();
+        let text = TextSystem::new(24, &font);
+        let requested_size = window_size_for_grid(80, 24, text.metrics());
+        let actual_size = PhysicalSize::new(requested_size.width, requested_size.height - 1);
+        let fallback_grid = text.visible_grid(actual_size);
+        let mut controller = ResizeController::default();
+
+        controller.request_grid_preserving_resize(80, 24, requested_size);
+
+        for _ in 0..MAX_PENDING_RESIZE_EVENTS {
+            let _ = controller.resolve_window_resize(actual_size, &text, (80, 24));
         }
 
         assert_eq!(
             controller.resolve_window_resize(actual_size, &text, (80, 24)),
-            Some((81, 24))
+            ResizeDecision::ApplyGrid(fallback_grid.0, fallback_grid.1)
         );
         assert_eq!(controller.pending_programmatic_resize, None);
     }
@@ -1068,6 +1203,40 @@ mod tests {
         assert_eq!(
             selection_move_for_key(&Key::Named(NamedKey::ArrowLeft), ModifiersState::empty()),
             None
+        );
+    }
+
+    #[test]
+    fn viewport_scroll_shortcuts_use_shift_page_keys_only() {
+        assert_eq!(
+            viewport_scroll_shortcut(&Key::Named(NamedKey::PageUp), ModifiersState::SHIFT),
+            Some(1)
+        );
+        assert_eq!(
+            viewport_scroll_shortcut(&Key::Named(NamedKey::PageDown), ModifiersState::SHIFT),
+            Some(-1)
+        );
+        assert_eq!(
+            viewport_scroll_shortcut(
+                &Key::Named(NamedKey::PageUp),
+                ModifiersState::SHIFT.union(ModifiersState::CONTROL)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn pixel_mouse_wheel_deltas_convert_to_row_units() {
+        assert_eq!(
+            viewport_scroll_lines_from_delta(
+                MouseScrollDelta::PixelDelta(winit::dpi::PhysicalPosition::new(0.0, 36.0)),
+                18.0
+            ),
+            2.0
+        );
+        assert_eq!(
+            viewport_scroll_lines_from_delta(MouseScrollDelta::LineDelta(0.0, -3.0), 18.0),
+            -3.0
         );
     }
 

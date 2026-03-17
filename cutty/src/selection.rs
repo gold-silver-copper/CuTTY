@@ -1,6 +1,6 @@
 use winit::dpi::PhysicalPosition;
 
-use crate::terminal::TerminalState;
+use crate::terminal::{StableRowIndex, TerminalState};
 use crate::text::{CellMetrics, PADDING_X, PADDING_Y};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -9,27 +9,33 @@ pub struct CellPos {
     pub col: u16,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct StableCellPos {
+    pub row: StableRowIndex,
+    pub col: u16,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SelectionRange {
-    pub start: CellPos,
-    pub end: CellPos,
+    pub start: StableCellPos,
+    pub end: StableCellPos,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct SelectionState {
-    anchor: Option<CellPos>,
-    focus: Option<CellPos>,
+    anchor: Option<StableCellPos>,
+    focus: Option<StableCellPos>,
     selecting: bool,
 }
 
 impl SelectionState {
-    pub fn begin(&mut self, pos: CellPos) {
+    pub fn begin(&mut self, pos: StableCellPos) {
         self.anchor = Some(pos);
         self.focus = Some(pos);
         self.selecting = true;
     }
 
-    pub fn update(&mut self, pos: CellPos) -> bool {
+    pub fn update(&mut self, pos: StableCellPos) -> bool {
         if self.selecting && self.focus != Some(pos) {
             self.focus = Some(pos);
             return true;
@@ -52,15 +58,15 @@ impl SelectionState {
         self.selecting = false;
     }
 
-    pub fn anchor(&self) -> Option<CellPos> {
+    pub fn anchor(&self) -> Option<StableCellPos> {
         self.anchor
     }
 
-    pub fn focus(&self) -> Option<CellPos> {
+    pub fn focus(&self) -> Option<StableCellPos> {
         self.focus
     }
 
-    pub fn set_range(&mut self, anchor: CellPos, focus: CellPos) -> bool {
+    pub fn set_range(&mut self, anchor: StableCellPos, focus: StableCellPos) -> bool {
         let changed = self.anchor != Some(anchor) || self.focus != Some(focus) || self.selecting;
         self.anchor = Some(anchor);
         self.focus = Some(focus);
@@ -88,7 +94,34 @@ impl SelectionState {
         let range = self.range()?;
         let (_, cols) = terminal.size();
         let end_col = range.end.col.saturating_add(1).min(cols);
-        Some(terminal.contents_between(range.start.row, range.start.col, range.end.row, end_col))
+        Some(terminal.contents_between_stable(
+            range.start.row,
+            range.start.col,
+            range.end.row,
+            end_col,
+        ))
+    }
+
+    pub fn cols_for_visible_row(&self, terminal: &TerminalState, row: u16) -> Option<(u16, u16)> {
+        let range = self.range()?;
+        let stable_row = terminal.visible_row_to_stable_row(row);
+        if stable_row < range.start.row || stable_row > range.end.row {
+            return None;
+        }
+
+        let (_, cols) = terminal.size();
+        let start_col = if stable_row == range.start.row {
+            range.start.col
+        } else {
+            0
+        };
+        let end_col = if stable_row == range.end.row {
+            range.end.col.saturating_add(1).min(cols)
+        } else {
+            cols
+        };
+
+        (end_col > start_col).then_some((start_col, end_col))
     }
 }
 
@@ -119,13 +152,13 @@ pub fn cell_at_position(
 
 #[cfg(test)]
 mod tests {
-    use super::{CellPos, SelectionState};
+    use super::{SelectionState, StableCellPos};
     use crate::terminal::TerminalState;
 
     #[test]
     fn explicit_single_cell_selection_is_preserved() {
         let mut selection = SelectionState::default();
-        let cell = CellPos { row: 1, col: 2 };
+        let cell = StableCellPos { row: 1, col: 2 };
 
         assert!(selection.set_range(cell, cell));
         assert_eq!(selection.range().expect("range").start, cell);
@@ -139,7 +172,10 @@ mod tests {
         terminal.print('b');
 
         let mut selection = SelectionState::default();
-        selection.set_range(CellPos { row: 0, col: 1 }, CellPos { row: 0, col: 1 });
+        selection.set_range(
+            StableCellPos { row: 0, col: 1 },
+            StableCellPos { row: 0, col: 1 },
+        );
 
         assert_eq!(selection.selection_text(&terminal).as_deref(), Some("b"));
     }

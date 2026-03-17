@@ -7,7 +7,7 @@ use winit::dpi::PhysicalSize;
 
 use crate::{
     config::FontConfig,
-    terminal::{DEFAULT_FG, TerminalState, cell_colors},
+    terminal::{DEFAULT_FG, TerminalState, VisibleLineInfo, cell_colors},
 };
 
 pub const PADDING_X: f32 = 10.0;
@@ -32,13 +32,20 @@ pub struct ShapedRow {
     pub cells: Vec<ShapedCell>,
 }
 
+#[derive(Clone)]
+struct CachedRow {
+    stable_row: usize,
+    seqno: u64,
+    shaped: ShapedRow,
+}
+
 pub struct TextSystem {
     font: FontConfig,
     font_family: FontFamily<'static>,
     font_cx: FontContext,
     layout_cx: LayoutContext<Brush>,
     metrics: CellMetrics,
-    rows: Vec<Option<ShapedRow>>,
+    rows: Vec<Option<CachedRow>>,
 }
 
 impl TextSystem {
@@ -100,25 +107,32 @@ impl TextSystem {
         self.rows.iter_mut().for_each(|row| *row = None);
     }
 
-    pub fn sync_terminal_rows(&mut self, terminal: &TerminalState, dirty_rows: &[usize]) {
+    pub fn sync_terminal_rows(&mut self, terminal: &TerminalState) {
         let (rows, _) = terminal.size();
         self.resize_cache(rows);
 
-        for &row_index in dirty_rows {
-            if row_index < rows as usize {
-                self.rows[row_index] = Some(self.shape_row(terminal, row_index as u16));
-            }
-        }
-
         for row_index in 0..rows as usize {
-            if self.rows[row_index].is_none() {
-                self.rows[row_index] = Some(self.shape_row(terminal, row_index as u16));
+            let visible_row = row_index as u16;
+            let Some(line_info) = terminal.visible_line_info(visible_row) else {
+                self.rows[row_index] = None;
+                continue;
+            };
+
+            if !self.cached_row_matches(row_index, line_info) {
+                self.rows[row_index] = Some(CachedRow {
+                    stable_row: line_info.stable_row,
+                    seqno: line_info.seqno,
+                    shaped: self.shape_row(terminal, visible_row),
+                });
             }
         }
     }
 
     pub fn row(&self, row: usize) -> Option<&ShapedRow> {
-        self.rows.get(row).and_then(Option::as_ref)
+        self.rows
+            .get(row)
+            .and_then(Option::as_ref)
+            .map(|cached| &cached.shaped)
     }
 
     fn shape_row(&mut self, terminal: &TerminalState, row: u16) -> ShapedRow {
@@ -167,6 +181,15 @@ impl TextSystem {
         layout.break_all_lines(None);
         layout.align(None, Alignment::Start, AlignmentOptions::default());
         layout
+    }
+
+    fn cached_row_matches(&self, row: usize, line_info: VisibleLineInfo) -> bool {
+        self.rows
+            .get(row)
+            .and_then(Option::as_ref)
+            .is_some_and(|cached| {
+                cached.stable_row == line_info.stable_row && cached.seqno == line_info.seqno
+            })
     }
 
     fn set_font_size(&mut self, size: f32) -> bool {
