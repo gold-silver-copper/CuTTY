@@ -127,9 +127,29 @@ impl BufferRow {
         self.wrapped = false;
     }
 
+    fn is_blank_line(&self) -> bool {
+        !self.wrapped && self.cells.iter().all(TerminalCell::is_blank)
+    }
+
+    fn from_cells(cells: Vec<TerminalCell>, wrapped: bool) -> Self {
+        let mut row = Self { cells, wrapped };
+        if !wrapped {
+            row.trim_trailing_blanks();
+        }
+        row
+    }
+
     fn truncate_visible(&mut self, cols: u16) {
         self.cells.truncate(cols as usize);
         self.trim_trailing_blanks();
+    }
+
+    fn reflow_columns(&self, cols: u16) -> usize {
+        if self.wrapped {
+            self.cells.len().max(cols as usize)
+        } else {
+            self.cells.len()
+        }
     }
 
     fn set_cell(&mut self, col: usize, cell: TerminalCell) {
@@ -240,6 +260,59 @@ struct SavedCursor {
     attrs: CellAttributes,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct LogicalLine {
+    cells: Vec<TerminalCell>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LogicalPosition {
+    line: usize,
+    col: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PhysicalPosition {
+    row: usize,
+    col: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseTrackingMode {
+    Disabled,
+    Normal,
+    ButtonMotion,
+    AnyMotion,
+}
+
+impl Default for MouseTrackingMode {
+    fn default() -> Self {
+        Self::Disabled
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MouseModes {
+    normal_tracking: bool,
+    button_motion: bool,
+    any_motion: bool,
+    sgr: bool,
+}
+
+impl MouseModes {
+    fn tracking_mode(self) -> MouseTrackingMode {
+        if self.any_motion {
+            MouseTrackingMode::AnyMotion
+        } else if self.button_motion {
+            MouseTrackingMode::ButtonMotion
+        } else if self.normal_tracking {
+            MouseTrackingMode::Normal
+        } else {
+            MouseTrackingMode::Disabled
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TerminalModes {
     application_cursor: bool,
@@ -247,6 +320,9 @@ struct TerminalModes {
     hide_cursor: bool,
     wraparound: bool,
     alternate_screen: bool,
+    bracketed_paste: bool,
+    focus_reporting: bool,
+    mouse: MouseModes,
 }
 
 impl Default for TerminalModes {
@@ -257,14 +333,18 @@ impl Default for TerminalModes {
             hide_cursor: false,
             wraparound: true,
             alternate_screen: false,
+            bracketed_paste: false,
+            focus_reporting: false,
+            mouse: MouseModes::default(),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ScreenBuffer {
-    scrollback: VecDeque<BufferRow>,
-    screen: Vec<BufferRow>,
+    rows: VecDeque<BufferRow>,
+    physical_rows: u16,
+    stable_row_offset: usize,
     cursor: CursorState,
     saved_cursor: SavedCursor,
     attrs: CellAttributes,
@@ -276,8 +356,9 @@ struct ScreenBuffer {
 impl ScreenBuffer {
     fn new(rows: u16, scrollback_limit: usize) -> Self {
         let mut buffer = Self {
-            scrollback: VecDeque::with_capacity(scrollback_limit.min(256)),
-            screen: vec![BufferRow::default(); rows as usize],
+            rows: VecDeque::with_capacity(rows as usize + scrollback_limit.min(256)),
+            physical_rows: rows,
+            stable_row_offset: 0,
             cursor: CursorState::default(),
             saved_cursor: SavedCursor::default(),
             attrs: CellAttributes::default(),
@@ -285,76 +366,64 @@ impl ScreenBuffer {
             scroll_bottom: rows.saturating_sub(1),
             pending_wrap: false,
         };
-        buffer.ensure_screen_rows(rows);
+        buffer.ensure_physical_rows();
         buffer
     }
 
     fn visible_row(&self, row: u16) -> Option<&BufferRow> {
-        self.screen.get(row as usize)
+        (row < self.physical_rows)
+            .then(|| self.rows.get(self.phys_row(row)))
+            .flatten()
     }
 
     fn row_mut(&mut self, row: u16) -> &mut BufferRow {
-        &mut self.screen[row as usize]
+        let phys = self.phys_row(row);
+        self.rows.get_mut(phys).expect("visible row in range")
     }
 
-    fn resize(&mut self, rows: u16, scrollback_limit: usize) {
-        let current_rows = self.screen.len() as u16;
+    fn resize_rows(&mut self, rows: u16, scrollback_limit: usize) {
+        let current_rows = self.physical_rows;
+        let visible_start = self.visible_start();
 
         if rows > current_rows {
-            let mut restored = Vec::new();
-            let needed = rows as usize - current_rows as usize;
-            for _ in 0..needed {
-                let Some(row) = self.scrollback.pop_back() else {
-                    break;
-                };
-                restored.push(row);
-            }
-            restored.reverse();
-            let restored_len = restored.len() as u16;
-            if !restored.is_empty() {
-                let mut screen = restored;
-                screen.append(&mut self.screen);
-                self.screen = screen;
-                self.cursor.row = self
-                    .cursor
-                    .row
-                    .saturating_add(restored_len)
-                    .min(rows.saturating_sub(1));
-            }
-            while self.screen.len() < rows as usize {
-                self.screen.push(BufferRow::default());
-            }
+            let reveal = (rows - current_rows).min(visible_start as u16);
+            self.cursor.row = (self.cursor.row + reveal).min(rows.saturating_sub(1));
+            self.saved_cursor.cursor.row =
+                (self.saved_cursor.cursor.row + reveal).min(rows.saturating_sub(1));
         } else if rows < current_rows {
-            let remove = current_rows as usize - rows as usize;
-            for _ in 0..remove {
-                if !self.screen.is_empty() {
-                    let removed = self.screen.remove(0);
-                    self.push_scrollback(scrollback_limit, removed);
-                }
-            }
-            self.cursor.row = self.cursor.row.saturating_sub(remove as u16);
+            let hide = current_rows - rows;
+            self.cursor.row = self.cursor.row.saturating_sub(hide);
+            self.saved_cursor.cursor.row = self.saved_cursor.cursor.row.saturating_sub(hide);
         }
 
+        self.physical_rows = rows;
         self.scroll_top = 0;
         self.scroll_bottom = rows.saturating_sub(1);
+        self.ensure_physical_rows();
+        self.trim_to_capacity(scrollback_limit);
         self.cursor.row = self.cursor.row.min(rows.saturating_sub(1));
+        self.saved_cursor.cursor.row = self.saved_cursor.cursor.row.min(rows.saturating_sub(1));
         self.pending_wrap = false;
-        self.ensure_screen_rows(rows);
+    }
 
-        if scrollback_limit == 0 {
-            self.scrollback.clear();
-        }
+    fn reflow(&mut self, old_cols: u16, rows: u16, cols: u16, scrollback_limit: usize) {
+        self.prune_trailing_blank_rows();
+        let snapshot = collect_reflow_snapshot(self, old_cols);
+        let reflowed = reflow_snapshot(&snapshot, cols);
+        self.rebuild_from_reflow(reflowed, rows, cols, scrollback_limit);
     }
 
     fn reset(&mut self, rows: u16, scrollback_limit: usize) {
-        self.scrollback = VecDeque::with_capacity(scrollback_limit.min(256));
-        self.screen = vec![BufferRow::default(); rows as usize];
+        self.rows = VecDeque::with_capacity(rows as usize + scrollback_limit.min(256));
+        self.physical_rows = rows;
+        self.stable_row_offset = 0;
         self.cursor = CursorState::default();
         self.saved_cursor = SavedCursor::default();
         self.attrs = CellAttributes::default();
         self.scroll_top = 0;
         self.scroll_bottom = rows.saturating_sub(1);
         self.pending_wrap = false;
+        self.ensure_physical_rows();
     }
 
     fn save_cursor(&mut self) {
@@ -373,22 +442,36 @@ impl ScreenBuffer {
         self.pending_wrap = false;
     }
 
-    fn ensure_screen_rows(&mut self, rows: u16) {
-        while self.screen.len() < rows as usize {
-            self.screen.push(BufferRow::default());
+    fn clear_scrollback(&mut self) {
+        let visible_start = self.visible_start();
+        for _ in 0..visible_start {
+            self.rows.pop_front();
+            self.stable_row_offset += 1;
         }
-        self.screen.truncate(rows as usize);
+        self.ensure_physical_rows();
     }
 
-    fn push_scrollback(&mut self, scrollback_limit: usize, row: BufferRow) {
-        if scrollback_limit == 0 {
-            return;
-        }
+    fn visible_start(&self) -> usize {
+        self.rows.len().saturating_sub(self.physical_rows as usize)
+    }
 
-        self.scrollback.push_back(row);
-        while self.scrollback.len() > scrollback_limit {
-            self.scrollback.pop_front();
+    fn phys_row(&self, row: u16) -> usize {
+        self.visible_start() + row as usize
+    }
+
+    fn ensure_physical_rows(&mut self) {
+        while self.rows.len() < self.physical_rows as usize {
+            self.rows.push_back(BufferRow::default());
         }
+    }
+
+    fn trim_to_capacity(&mut self, scrollback_limit: usize) {
+        let capacity = self.physical_rows as usize + scrollback_limit;
+        while self.rows.len() > capacity.max(self.physical_rows as usize) {
+            self.rows.pop_front();
+            self.stable_row_offset += 1;
+        }
+        self.ensure_physical_rows();
     }
 
     fn scroll_up_region(&mut self, rows: u16, scrollback_limit: usize, count: u16) {
@@ -396,14 +479,22 @@ impl ScreenBuffer {
             return;
         }
 
-        let top = self.scroll_top as usize;
-        let bottom = self.scroll_bottom.min(rows.saturating_sub(1)) as usize;
+        let top = self.scroll_top.min(rows.saturating_sub(1));
+        let bottom = self.scroll_bottom.min(rows.saturating_sub(1));
+        let full_screen = top == 0 && bottom + 1 == rows;
         for _ in 0..count {
-            let removed = self.screen.remove(top);
-            if top == 0 && bottom + 1 == rows as usize {
-                self.push_scrollback(scrollback_limit, removed);
+            if full_screen && scrollback_limit > 0 {
+                self.rows.push_back(BufferRow::default());
+                self.trim_to_capacity(scrollback_limit);
+                continue;
             }
-            self.screen.insert(bottom, BufferRow::default());
+
+            let top_phys = self.phys_row(top);
+            let bottom_phys = self.phys_row(bottom);
+            if top_phys < self.rows.len() {
+                self.rows.remove(top_phys);
+                self.rows.insert(bottom_phys, BufferRow::default());
+            }
         }
     }
 
@@ -412,13 +503,236 @@ impl ScreenBuffer {
             return;
         }
 
-        let top = self.scroll_top as usize;
-        let bottom = self.scroll_bottom.min(rows.saturating_sub(1)) as usize;
+        let top = self.scroll_top.min(rows.saturating_sub(1));
+        let bottom = self.scroll_bottom.min(rows.saturating_sub(1));
         for _ in 0..count {
-            self.screen.remove(bottom);
-            self.screen.insert(top, BufferRow::default());
+            let top_phys = self.phys_row(top);
+            let bottom_phys = self.phys_row(bottom);
+            if bottom_phys < self.rows.len() {
+                self.rows.remove(bottom_phys);
+                self.rows.insert(top_phys, BufferRow::default());
+            }
         }
     }
+
+    fn rebuild_from_reflow(
+        &mut self,
+        reflowed: ReflowedBuffer,
+        rows: u16,
+        cols: u16,
+        scrollback_limit: usize,
+    ) {
+        let mut rows_deque: VecDeque<BufferRow> = reflowed.rows.into_iter().collect();
+        let capacity = rows as usize + scrollback_limit;
+        let dropped = rows_deque.len().saturating_sub(capacity.max(rows as usize));
+        for _ in 0..dropped {
+            rows_deque.pop_front();
+        }
+
+        let max_row = rows.saturating_sub(1) as usize;
+        let max_col = cols.saturating_sub(1) as usize;
+        self.rows = rows_deque;
+        self.physical_rows = rows;
+        self.stable_row_offset += dropped;
+        self.scroll_top = 0;
+        self.scroll_bottom = rows.saturating_sub(1);
+        self.pending_wrap = false;
+        self.ensure_physical_rows();
+
+        let visible_start = self.visible_start();
+        let cursor_phys = reflowed.cursor.row.saturating_sub(dropped);
+        let saved_cursor_phys = reflowed.saved_cursor.row.saturating_sub(dropped);
+        self.cursor.row = cursor_phys.saturating_sub(visible_start).min(max_row) as u16;
+        self.cursor.col = reflowed.cursor.col.min(max_col) as u16;
+        self.saved_cursor.cursor.row =
+            saved_cursor_phys.saturating_sub(visible_start).min(max_row) as u16;
+        self.saved_cursor.cursor.col = reflowed.saved_cursor.col.min(max_col) as u16;
+    }
+
+    fn prune_trailing_blank_rows(&mut self) {
+        let cursor_phys = self.phys_row(self.cursor.row);
+        while self.rows.len() > cursor_phys + 1
+            && self.rows.back().is_some_and(BufferRow::is_blank_line)
+        {
+            self.rows.pop_back();
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ReflowSnapshot {
+    lines: Vec<LogicalLine>,
+    cursor: LogicalPosition,
+    saved_cursor: LogicalPosition,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ReflowedBuffer {
+    rows: Vec<BufferRow>,
+    cursor: PhysicalPosition,
+    saved_cursor: PhysicalPosition,
+}
+
+fn collect_reflow_snapshot(buffer: &ScreenBuffer, cols: u16) -> ReflowSnapshot {
+    let cursor_row = buffer.visible_start() + buffer.cursor.row as usize;
+    let saved_cursor_row = buffer.visible_start() + buffer.saved_cursor.cursor.row as usize;
+    let mut snapshot = ReflowSnapshot::default();
+    let mut current_line = LogicalLine::default();
+    let mut current_cursor = None;
+    let mut current_saved_cursor = None;
+
+    for (row_index, row) in buffer.rows.iter().enumerate() {
+        let line_offset = current_line.cells.len();
+        let mut logical_columns = row.reflow_columns(cols);
+        if row_index == cursor_row {
+            logical_columns = logical_columns.max(buffer.cursor.col as usize);
+            current_cursor = Some(line_offset + buffer.cursor.col as usize);
+        }
+        if row_index == saved_cursor_row {
+            logical_columns = logical_columns.max(buffer.saved_cursor.cursor.col as usize);
+            current_saved_cursor = Some(line_offset + buffer.saved_cursor.cursor.col as usize);
+        }
+
+        current_line.cells.extend(row.cells.iter().cloned());
+        current_line
+            .cells
+            .resize(line_offset + logical_columns, TerminalCell::default());
+
+        if !row.wrapped() {
+            finalize_logical_line(
+                &mut snapshot,
+                &mut current_line,
+                &mut current_cursor,
+                &mut current_saved_cursor,
+            );
+        }
+    }
+
+    if !current_line.cells.is_empty() || snapshot.lines.is_empty() {
+        finalize_logical_line(
+            &mut snapshot,
+            &mut current_line,
+            &mut current_cursor,
+            &mut current_saved_cursor,
+        );
+    }
+
+    snapshot
+}
+
+fn finalize_logical_line(
+    snapshot: &mut ReflowSnapshot,
+    current_line: &mut LogicalLine,
+    current_cursor: &mut Option<usize>,
+    current_saved_cursor: &mut Option<usize>,
+) {
+    let line_index = snapshot.lines.len();
+    if let Some(col) = current_cursor.take() {
+        snapshot.cursor = LogicalPosition {
+            line: line_index,
+            col,
+        };
+    }
+    if let Some(col) = current_saved_cursor.take() {
+        snapshot.saved_cursor = LogicalPosition {
+            line: line_index,
+            col,
+        };
+    }
+    snapshot.lines.push(std::mem::take(current_line));
+}
+
+fn reflow_snapshot(snapshot: &ReflowSnapshot, cols: u16) -> ReflowedBuffer {
+    let width = cols.max(1) as usize;
+    let mut reflowed = ReflowedBuffer::default();
+
+    for (line_index, line) in snapshot.lines.iter().enumerate() {
+        if line.cells.is_empty() {
+            let row_index = reflowed.rows.len();
+            reflowed.rows.push(BufferRow::default());
+            if snapshot.cursor.line == line_index {
+                reflowed.cursor = PhysicalPosition {
+                    row: row_index,
+                    col: 0,
+                };
+            }
+            if snapshot.saved_cursor.line == line_index {
+                reflowed.saved_cursor = PhysicalPosition {
+                    row: row_index,
+                    col: 0,
+                };
+            }
+            continue;
+        }
+
+        let mut start = 0;
+        while start < line.cells.len() {
+            let end = reflow_break(&line.cells, start, width);
+            let wrapped = end < line.cells.len();
+            let mut cells = line.cells[start..end].to_vec();
+            if wrapped && cells.len() < width {
+                cells.resize(width, TerminalCell::default());
+            }
+
+            let row_index = reflowed.rows.len();
+            if logical_position_maps_to_row(
+                snapshot.cursor,
+                line_index,
+                start,
+                end,
+                line.cells.len(),
+            ) {
+                reflowed.cursor = PhysicalPosition {
+                    row: row_index,
+                    col: snapshot.cursor.col.saturating_sub(start),
+                };
+            }
+            if logical_position_maps_to_row(
+                snapshot.saved_cursor,
+                line_index,
+                start,
+                end,
+                line.cells.len(),
+            ) {
+                reflowed.saved_cursor = PhysicalPosition {
+                    row: row_index,
+                    col: snapshot.saved_cursor.col.saturating_sub(start),
+                };
+            }
+
+            reflowed.rows.push(BufferRow::from_cells(cells, wrapped));
+            start = end;
+        }
+    }
+
+    reflowed
+}
+
+fn reflow_break(cells: &[TerminalCell], start: usize, width: usize) -> usize {
+    if start >= cells.len() {
+        return start;
+    }
+
+    let mut end = (start + width.max(1)).min(cells.len());
+    if end < cells.len() && cells[end].is_wide_continuation() {
+        end = end.saturating_sub(1);
+        if end == start {
+            end = (start + 2).min(cells.len());
+        }
+    }
+    end.max(start + 1).min(cells.len())
+}
+
+fn logical_position_maps_to_row(
+    position: LogicalPosition,
+    line_index: usize,
+    start: usize,
+    end: usize,
+    total: usize,
+) -> bool {
+    position.line == line_index
+        && position.col >= start
+        && (position.col < end || (end == total && position.col == end))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -466,13 +780,40 @@ impl TerminalState {
         self.modes.application_keypad
     }
 
+    pub fn bracketed_paste(&self) -> bool {
+        self.modes.bracketed_paste
+    }
+
+    pub fn focus_reporting(&self) -> bool {
+        self.modes.focus_reporting
+    }
+
+    pub fn mouse_tracking_mode(&self) -> MouseTrackingMode {
+        self.modes.mouse.tracking_mode()
+    }
+
+    pub fn mouse_reporting_enabled(&self) -> bool {
+        self.mouse_tracking_mode() != MouseTrackingMode::Disabled
+    }
+
+    pub fn sgr_mouse(&self) -> bool {
+        self.modes.mouse.sgr
+    }
+
     pub fn resize(&mut self, rows: u16, cols: u16) {
         if rows == self.rows && cols == self.cols {
             return;
         }
 
-        self.primary.resize(rows, self.scrollback_limit);
-        self.alternate.resize(rows, 0);
+        let old_cols = self.cols;
+        if cols != old_cols {
+            self.primary
+                .reflow(old_cols, rows, cols, self.scrollback_limit);
+            self.alternate.reflow(old_cols, rows, cols, 0);
+        } else {
+            self.primary.resize_rows(rows, self.scrollback_limit);
+            self.alternate.resize_rows(rows, 0);
+        }
         self.rows = rows;
         self.cols = cols;
         self.resize_tab_stops(cols);
@@ -767,7 +1108,7 @@ impl TerminalState {
     pub fn erase_in_display(&mut self, mode: u16) {
         self.active_buffer_mut().pending_wrap = false;
         match mode {
-            3 => self.active_buffer_mut().scrollback.clear(),
+            3 => self.active_buffer_mut().clear_scrollback(),
             1 => {
                 let cursor_row = self.active_buffer().cursor.row;
                 for row in 0..cursor_row {
@@ -778,8 +1119,8 @@ impl TerminalState {
                 self.row_mut(cursor_row).clear_range(0, cursor_col);
             }
             2 => {
-                for row in &mut self.active_buffer_mut().screen {
-                    row.clear();
+                for row in 0..self.rows {
+                    self.row_mut(row).clear();
                 }
             }
             _ => {
@@ -844,13 +1185,12 @@ impl TerminalState {
         if cursor_row < scroll_top || cursor_row > scroll_bottom {
             return;
         }
-        let row = cursor_row as usize;
-        let bottom = scroll_bottom as usize;
+        let row = self.active_buffer().phys_row(cursor_row);
+        let bottom = self.active_buffer().phys_row(scroll_bottom);
         for _ in 0..count.max(1) {
-            self.active_buffer_mut()
-                .screen
-                .insert(row, BufferRow::default());
-            self.active_buffer_mut().screen.remove(bottom + 1);
+            let buffer = self.active_buffer_mut();
+            buffer.rows.insert(row, BufferRow::default());
+            buffer.rows.remove(bottom + 1);
         }
     }
 
@@ -862,13 +1202,12 @@ impl TerminalState {
         if cursor_row < scroll_top || cursor_row > scroll_bottom {
             return;
         }
-        let row = cursor_row as usize;
-        let bottom = scroll_bottom as usize;
+        let row = self.active_buffer().phys_row(cursor_row);
+        let bottom = self.active_buffer().phys_row(scroll_bottom);
         for _ in 0..count.max(1) {
-            self.active_buffer_mut().screen.remove(row);
-            self.active_buffer_mut()
-                .screen
-                .insert(bottom, BufferRow::default());
+            let buffer = self.active_buffer_mut();
+            buffer.rows.remove(row);
+            buffer.rows.insert(bottom, BufferRow::default());
         }
     }
 
@@ -906,8 +1245,14 @@ impl TerminalState {
             1 => self.modes.application_cursor = enabled,
             7 => self.modes.wraparound = enabled,
             25 => self.modes.hide_cursor = !enabled,
+            1000 => self.modes.mouse.normal_tracking = enabled,
+            1002 => self.modes.mouse.button_motion = enabled,
+            1003 => self.modes.mouse.any_motion = enabled,
+            1004 => self.modes.focus_reporting = enabled,
+            1006 => self.modes.mouse.sgr = enabled,
             47 | 1047 => self.set_alternate_screen(enabled, false),
             1049 => self.set_alternate_screen(enabled, true),
+            2004 => self.modes.bracketed_paste = enabled,
             _ => {}
         }
     }
@@ -1145,7 +1490,7 @@ fn is_default_tab_stop(col: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{TerminalColor, TerminalState};
+    use super::{MouseTrackingMode, TerminalColor, TerminalState};
 
     #[test]
     fn preserves_columns_when_resizing_wider_again() {
@@ -1161,6 +1506,43 @@ mod tests {
             terminal.visible_row(0).expect("row").text_range(0, 12),
             "abcdefghijkl"
         );
+    }
+
+    #[test]
+    fn resizing_narrower_reflows_logical_lines() {
+        let mut terminal = TerminalState::new(4, 12, 16);
+        for ch in "abcdefghijkl".chars() {
+            terminal.print(ch);
+        }
+
+        terminal.resize(4, 6);
+
+        assert_eq!(
+            terminal.visible_row(0).expect("row").text_range(0, 6),
+            "abcdef"
+        );
+        assert!(terminal.visible_row(0).expect("row").wrapped());
+        assert_eq!(
+            terminal.visible_row(1).expect("row").text_range(0, 6),
+            "ghijkl"
+        );
+        assert!(!terminal.visible_row(1).expect("row").wrapped());
+    }
+
+    #[test]
+    fn resizing_keeps_cursor_on_same_logical_column() {
+        let mut terminal = TerminalState::new(4, 12, 16);
+        for ch in "abcdefghijklmnop".chars() {
+            terminal.print(ch);
+        }
+
+        assert_eq!(terminal.cursor_position(), (1, 4));
+
+        terminal.resize(4, 6);
+        assert_eq!(terminal.cursor_position(), (2, 4));
+
+        terminal.resize(4, 12);
+        assert_eq!(terminal.cursor_position(), (1, 4));
     }
 
     #[test]
@@ -1224,5 +1606,51 @@ mod tests {
         terminal.set_private_mode(47, true);
         assert_eq!(terminal.contents_between(0, 0, 0, 1), " ");
         assert_eq!(terminal.cursor_position(), (0, 0));
+    }
+
+    #[test]
+    fn private_modes_toggle_bracketed_paste_and_focus_reporting() {
+        let mut terminal = TerminalState::new(2, 8, 16);
+
+        terminal.set_private_mode(2004, true);
+        terminal.set_private_mode(1004, true);
+
+        assert!(terminal.bracketed_paste());
+        assert!(terminal.focus_reporting());
+
+        terminal.set_private_mode(2004, false);
+        terminal.set_private_mode(1004, false);
+
+        assert!(!terminal.bracketed_paste());
+        assert!(!terminal.focus_reporting());
+    }
+
+    #[test]
+    fn mouse_tracking_prefers_highest_enabled_mode() {
+        let mut terminal = TerminalState::new(2, 8, 16);
+
+        terminal.set_private_mode(1000, true);
+        assert_eq!(terminal.mouse_tracking_mode(), MouseTrackingMode::Normal);
+
+        terminal.set_private_mode(1002, true);
+        assert_eq!(
+            terminal.mouse_tracking_mode(),
+            MouseTrackingMode::ButtonMotion
+        );
+
+        terminal.set_private_mode(1003, true);
+        assert_eq!(terminal.mouse_tracking_mode(), MouseTrackingMode::AnyMotion);
+
+        terminal.set_private_mode(1003, false);
+        assert_eq!(
+            terminal.mouse_tracking_mode(),
+            MouseTrackingMode::ButtonMotion
+        );
+
+        terminal.set_private_mode(1002, false);
+        assert_eq!(terminal.mouse_tracking_mode(), MouseTrackingMode::Normal);
+
+        terminal.set_private_mode(1000, false);
+        assert_eq!(terminal.mouse_tracking_mode(), MouseTrackingMode::Disabled);
     }
 }

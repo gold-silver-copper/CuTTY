@@ -52,12 +52,25 @@ impl SelectionState {
         self.selecting = false;
     }
 
+    pub fn anchor(&self) -> Option<CellPos> {
+        self.anchor
+    }
+
+    pub fn focus(&self) -> Option<CellPos> {
+        self.focus
+    }
+
+    pub fn set_range(&mut self, anchor: CellPos, focus: CellPos) -> bool {
+        let changed = self.anchor != Some(anchor) || self.focus != Some(focus) || self.selecting;
+        self.anchor = Some(anchor);
+        self.focus = Some(focus);
+        self.selecting = false;
+        changed
+    }
+
     pub fn range(&self) -> Option<SelectionRange> {
         let anchor = self.anchor?;
         let focus = self.focus?;
-        if anchor == focus {
-            return None;
-        }
 
         let (start, end) = if anchor <= focus {
             (anchor, focus)
@@ -102,4 +115,32 @@ pub fn cell_at_position(
     }
 
     Some(CellPos { row, col })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CellPos, SelectionState};
+    use crate::terminal::TerminalState;
+
+    #[test]
+    fn explicit_single_cell_selection_is_preserved() {
+        let mut selection = SelectionState::default();
+        let cell = CellPos { row: 1, col: 2 };
+
+        assert!(selection.set_range(cell, cell));
+        assert_eq!(selection.range().expect("range").start, cell);
+        assert_eq!(selection.range().expect("range").end, cell);
+    }
+
+    #[test]
+    fn single_cell_selection_text_round_trips() {
+        let mut terminal = TerminalState::new(2, 4, 0);
+        terminal.print('a');
+        terminal.print('b');
+
+        let mut selection = SelectionState::default();
+        selection.set_range(CellPos { row: 0, col: 1 }, CellPos { row: 0, col: 1 });
+
+        assert_eq!(selection.selection_text(&terminal).as_deref(), Some("b"));
+    }
 }

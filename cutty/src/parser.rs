@@ -394,7 +394,7 @@ fn named_color_index(color: NamedColor) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::AnsiParser;
-    use crate::terminal::TerminalState;
+    use crate::terminal::{MouseTrackingMode, TerminalState};
 
     #[test]
     fn csi_save_and_restore_cursor_position() {
@@ -470,5 +470,24 @@ mod tests {
 
         assert_eq!(terminal.contents_between(0, 0, 0, 4), "main");
         assert_eq!(terminal.cursor_position(), primary_cursor);
+    }
+
+    #[test]
+    fn private_modes_enable_bracketed_paste_focus_and_mouse_reporting() {
+        let mut parser = AnsiParser::new();
+        let mut terminal = TerminalState::new(2, 8, 16);
+
+        parser.process(
+            &mut terminal,
+            b"\x1b[?2004h\x1b[?1004h\x1b[?1002h\x1b[?1006h",
+        );
+
+        assert!(terminal.bracketed_paste());
+        assert!(terminal.focus_reporting());
+        assert_eq!(
+            terminal.mouse_tracking_mode(),
+            MouseTrackingMode::ButtonMotion
+        );
+        assert!(terminal.sgr_mouse());
     }
 }
