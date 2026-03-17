@@ -19,9 +19,12 @@ path = "src/bin/cutty.rs"
 [dependencies]
 arboard = "3.6"
 anyhow = "1.0"
+directories = "6.0"
 parley = { version = "0.7.0", path = "../parley-main/parley" }
 pollster = "0.4"
 portable-pty = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.9.12"
 unicode-width = "0.2"
 vello = { version = "0.7.0", path = "../vello-main/vello" }
 vte = { version = "0.15", features = ["ansi"] }

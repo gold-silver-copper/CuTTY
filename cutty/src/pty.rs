@@ -18,7 +18,12 @@ pub struct PtyProcess {
 }
 
 impl PtyProcess {
-    pub fn spawn(proxy: EventLoopProxy<UserEvent>, cols: u16, rows: u16) -> Result<Self> {
+    pub fn spawn(
+        proxy: EventLoopProxy<UserEvent>,
+        cols: u16,
+        rows: u16,
+        shell: Option<&str>,
+    ) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -29,7 +34,10 @@ impl PtyProcess {
             })
             .context("failed to open PTY")?;
 
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_owned());
+        let shell = shell
+            .map(ToOwned::to_owned)
+            .or_else(|| std::env::var("SHELL").ok())
+            .unwrap_or_else(|| "/bin/zsh".to_owned());
         let mut cmd = CommandBuilder::new(&shell);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");

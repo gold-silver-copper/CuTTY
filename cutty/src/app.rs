@@ -10,6 +10,7 @@ use winit::{
 };
 
 use crate::{
+    config::AppConfig,
     events::UserEvent,
     input::bytes_for_key_event,
     parser::AnsiParser,
@@ -20,11 +21,12 @@ use crate::{
     text::{PADDING_X, PADDING_Y, TextSystem},
 };
 
-const SCROLLBACK_LEN: usize = 5_000;
+const FONT_SIZE_STEP: f32 = 1.0;
 
-pub fn run() -> Result<()> {
+pub fn run(config: AppConfig) -> Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let mut app = App {
+        config,
         state: None,
         proxy: event_loop.create_proxy(),
     };
@@ -33,6 +35,7 @@ pub fn run() -> Result<()> {
 }
 
 pub struct App {
+    config: AppConfig,
     state: Option<AppState>,
     proxy: EventLoopProxy<UserEvent>,
 }
@@ -101,6 +104,12 @@ impl AppState {
         self.window.request_redraw();
     }
 
+    fn adjust_font_size(&mut self, delta: f32) {
+        if self.text.adjust_font_size(delta) {
+            self.sync_to_window_size();
+        }
+    }
+
     fn drain_pty(&mut self) {
         let mut changed = false;
         for chunk in self.pty.drain() {
@@ -141,14 +150,24 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
 
-        let window = GpuWindow::new(event_loop, "cutty", (1180, 760))
-            .expect("failed to initialize GPU window");
-        let mut text = TextSystem::new(1);
+        let window = GpuWindow::new(
+            event_loop,
+            "cutty",
+            (self.config.window.width, self.config.window.height),
+        )
+        .expect("failed to initialize GPU window");
+        let mut text = TextSystem::new(1, &self.config.font);
         let (cols, rows) = text.visible_grid(window.inner_size());
         text.resize_cache(rows);
         let parser = AnsiParser::new();
-        let terminal = TerminalState::new(rows, cols, SCROLLBACK_LEN);
-        let pty = PtyProcess::spawn(self.proxy.clone(), cols, rows).expect("failed to spawn shell");
+        let terminal = TerminalState::new(rows, cols, self.config.terminal.scrollback);
+        let pty = PtyProcess::spawn(
+            self.proxy.clone(),
+            cols,
+            rows,
+            self.config.terminal.shell.as_deref(),
+        )
+        .expect("failed to spawn shell");
 
         self.state = Some(AppState {
             window,
@@ -229,6 +248,10 @@ impl ApplicationHandler<UserEvent> for App {
                 if event.state == ElementState::Pressed {
                     let is_copy = is_copy_shortcut(&event.logical_key, state.modifiers);
                     let is_paste = is_paste_shortcut(&event.logical_key, state.modifiers);
+                    let is_font_increase =
+                        is_font_increase_shortcut(&event.logical_key, state.modifiers);
+                    let is_font_decrease =
+                        is_font_decrease_shortcut(&event.logical_key, state.modifiers);
 
                     if is_copy {
                         state.copy_selection();
@@ -237,6 +260,16 @@ impl ApplicationHandler<UserEvent> for App {
 
                     if is_paste {
                         state.paste_clipboard();
+                        return;
+                    }
+
+                    if is_font_increase {
+                        state.adjust_font_size(FONT_SIZE_STEP);
+                        return;
+                    }
+
+                    if is_font_decrease {
+                        state.adjust_font_size(-FONT_SIZE_STEP);
                         return;
                     }
 
@@ -303,6 +336,63 @@ fn is_paste_shortcut(key: &Key, modifiers: ModifiersState) -> bool {
         }
 }
 
+fn is_font_increase_shortcut(key: &Key, modifiers: ModifiersState) -> bool {
+    uses_command_shortcuts(modifiers) && matches_one_of(key, &["+", "="])
+}
+
+fn is_font_decrease_shortcut(key: &Key, modifiers: ModifiersState) -> bool {
+    uses_command_shortcuts(modifiers) && matches_one_of(key, &["-", "_"])
+}
+
+fn uses_command_shortcuts(modifiers: ModifiersState) -> bool {
+    modifiers.super_key() && !modifiers.control_key() && !modifiers.alt_key()
+}
+
 fn matches_character(key: &Key, expected: &str) -> bool {
     matches!(key.as_ref(), Key::Character(text) if text.eq_ignore_ascii_case(expected))
+}
+
+fn matches_one_of(key: &Key, expected: &[&str]) -> bool {
+    expected
+        .iter()
+        .any(|candidate| matches_character(key, candidate))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_font_decrease_shortcut, is_font_increase_shortcut, uses_command_shortcuts};
+    use winit::keyboard::{Key, ModifiersState};
+
+    #[test]
+    fn command_shortcuts_require_super_without_ctrl_or_alt() {
+        assert!(uses_command_shortcuts(ModifiersState::SUPER));
+        assert!(!uses_command_shortcuts(
+            ModifiersState::SUPER.union(ModifiersState::CONTROL)
+        ));
+        assert!(!uses_command_shortcuts(
+            ModifiersState::SUPER.union(ModifiersState::ALT)
+        ));
+    }
+
+    #[test]
+    fn font_shortcuts_match_plus_equals_minus_and_underscore() {
+        let modifiers = ModifiersState::SUPER;
+
+        assert!(is_font_increase_shortcut(
+            &Key::Character("+".into()),
+            modifiers
+        ));
+        assert!(is_font_increase_shortcut(
+            &Key::Character("=".into()),
+            modifiers
+        ));
+        assert!(is_font_decrease_shortcut(
+            &Key::Character("-".into()),
+            modifiers
+        ));
+        assert!(is_font_decrease_shortcut(
+            &Key::Character("_".into()),
+            modifiers
+        ));
+    }
 }

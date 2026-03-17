@@ -1,15 +1,19 @@
 use parley::{
-    Alignment, AlignmentOptions, FontContext, GenericFamily, Layout, LayoutContext, LineHeight,
+    Alignment, AlignmentOptions, FontContext, FontFamily, Layout, LayoutContext, LineHeight,
     StyleProperty,
 };
 use vello::peniko::{Brush, Color};
 use winit::dpi::PhysicalSize;
 
-use crate::terminal::{DEFAULT_FG, TerminalState, cell_colors};
+use crate::{
+    config::FontConfig,
+    terminal::{DEFAULT_FG, TerminalState, cell_colors},
+};
 
 pub const PADDING_X: f32 = 10.0;
 pub const PADDING_Y: f32 = 10.0;
-pub const FONT_SIZE: f32 = 18.0;
+pub const MIN_FONT_SIZE: f32 = 8.0;
+pub const MAX_FONT_SIZE: f32 = 72.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct CellMetrics {
@@ -29,6 +33,8 @@ pub struct ShapedRow {
 }
 
 pub struct TextSystem {
+    font: FontConfig,
+    font_family: FontFamily<'static>,
     font_cx: FontContext,
     layout_cx: LayoutContext<Brush>,
     metrics: CellMetrics,
@@ -36,12 +42,16 @@ pub struct TextSystem {
 }
 
 impl TextSystem {
-    pub fn new(visible_rows: u16) -> Self {
+    pub fn new(visible_rows: u16, font: &FontConfig) -> Self {
+        let font = font.clone();
+        let font_family = font.family_stack();
         let mut font_cx = FontContext::default();
         let mut layout_cx = LayoutContext::default();
-        let metrics = measure_cell_metrics(&mut font_cx, &mut layout_cx);
+        let metrics = measure_cell_metrics(&mut font_cx, &mut layout_cx, &font, &font_family);
 
         Self {
+            font,
+            font_family,
             font_cx,
             layout_cx,
             metrics,
@@ -51,6 +61,23 @@ impl TextSystem {
 
     pub fn metrics(&self) -> CellMetrics {
         self.metrics
+    }
+
+    pub fn adjust_font_size(&mut self, delta: f32) -> bool {
+        let new_size = (self.font.size + delta).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+        if (new_size - self.font.size).abs() < f32::EPSILON {
+            return false;
+        }
+
+        self.font.size = new_size;
+        self.metrics = measure_cell_metrics(
+            &mut self.font_cx,
+            &mut self.layout_cx,
+            &self.font,
+            &self.font_family,
+        );
+        self.invalidate_rows();
+        true
     }
 
     pub fn visible_grid(&self, size: PhysicalSize<u32>) -> (u16, u16) {
@@ -63,6 +90,10 @@ impl TextSystem {
 
     pub fn resize_cache(&mut self, rows: u16) {
         self.rows.resize(rows as usize, None);
+    }
+
+    fn invalidate_rows(&mut self) {
+        self.rows.iter_mut().for_each(|row| *row = None);
     }
 
     pub fn sync_terminal_rows(&mut self, terminal: &TerminalState, dirty_rows: &[usize]) {
@@ -120,8 +151,8 @@ impl TextSystem {
         let mut builder = self
             .layout_cx
             .ranged_builder(&mut self.font_cx, text, 1.0, true);
-        builder.push_default(GenericFamily::Monospace);
-        builder.push_default(StyleProperty::FontSize(FONT_SIZE));
+        builder.push_default(StyleProperty::FontFamily(self.font_family.clone()));
+        builder.push_default(StyleProperty::FontSize(self.font.size));
         builder.push_default(LineHeight::Absolute(self.metrics.height));
         builder.push_default(StyleProperty::Brush(Brush::Solid(color_from_rgb(
             DEFAULT_FG,
@@ -138,12 +169,14 @@ impl TextSystem {
 fn measure_cell_metrics(
     font_cx: &mut FontContext,
     layout_cx: &mut LayoutContext<Brush>,
+    font: &FontConfig,
+    font_family: &FontFamily<'static>,
 ) -> CellMetrics {
     let sample = "M";
     let mut builder = layout_cx.ranged_builder(font_cx, sample, 1.0, true);
-    builder.push_default(GenericFamily::Monospace);
-    builder.push_default(StyleProperty::FontSize(FONT_SIZE));
-    builder.push_default(LineHeight::FontSizeRelative(1.25));
+    builder.push_default(StyleProperty::FontFamily(font_family.clone()));
+    builder.push_default(StyleProperty::FontSize(font.size));
+    builder.push_default(LineHeight::FontSizeRelative(font.line_height));
     builder.push_default(StyleProperty::Brush(Brush::Solid(Color::WHITE)));
 
     let mut layout = builder.build(sample);
@@ -153,10 +186,41 @@ fn measure_cell_metrics(
     let line = layout.lines().next().expect("sample line");
     CellMetrics {
         width: layout.full_width().max(1.0).ceil(),
-        height: line.metrics().line_height.max(FONT_SIZE).ceil(),
+        height: line.metrics().line_height.max(font.size).ceil(),
     }
 }
 
 fn color_from_rgb(color: crate::terminal::Rgb) -> Color {
     Color::from_rgb8(color.r, color.g, color.b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_FONT_SIZE, MIN_FONT_SIZE, TextSystem};
+    use crate::config::FontConfig;
+
+    #[test]
+    fn font_size_adjustment_recomputes_metrics() {
+        let font = FontConfig::default();
+        let mut text = TextSystem::new(4, &font);
+        let original = text.metrics();
+
+        assert!(text.adjust_font_size(2.0));
+
+        let updated = text.metrics();
+        assert!(updated.width >= original.width);
+        assert!(updated.height >= original.height);
+    }
+
+    #[test]
+    fn font_size_adjustment_respects_bounds() {
+        let font = FontConfig::default();
+        let mut text = TextSystem::new(4, &font);
+
+        assert!(text.adjust_font_size(MIN_FONT_SIZE - 100.0));
+        assert!(!text.adjust_font_size(-1.0));
+
+        assert!(text.adjust_font_size(MAX_FONT_SIZE));
+        assert!(!text.adjust_font_size(1.0));
+    }
 }

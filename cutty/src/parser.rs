@@ -439,4 +439,36 @@ mod tests {
 
         assert_eq!(parser.take_responses(), vec![b"\x1b[8;7;11t".to_vec()]);
     }
+
+    #[test]
+    fn private_mode_1047_switches_between_primary_and_alternate_buffers() {
+        let mut parser = AnsiParser::new();
+        let mut terminal = TerminalState::new(2, 8, 16);
+
+        parser.process(&mut terminal, b"main");
+        parser.process(&mut terminal, b"\x1b[?1047h");
+        assert_eq!(terminal.contents_between(0, 0, 0, 4), "    ");
+
+        parser.process(&mut terminal, b"alt");
+        assert_eq!(terminal.contents_between(0, 0, 0, 3), "alt");
+
+        parser.process(&mut terminal, b"\x1b[?1047l");
+        assert_eq!(terminal.contents_between(0, 0, 0, 4), "main");
+    }
+
+    #[test]
+    fn private_mode_1049_restores_saved_cursor_on_exit() {
+        let mut parser = AnsiParser::new();
+        let mut terminal = TerminalState::new(2, 8, 16);
+
+        parser.process(&mut terminal, b"main");
+        let primary_cursor = terminal.cursor_position();
+
+        parser.process(&mut terminal, b"\x1b[?1049h");
+        parser.process(&mut terminal, b"alt");
+        parser.process(&mut terminal, b"\x1b[?1049l");
+
+        assert_eq!(terminal.contents_between(0, 0, 0, 4), "main");
+        assert_eq!(terminal.cursor_position(), primary_cursor);
+    }
 }
