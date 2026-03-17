@@ -1,0 +1,37 @@
+name: CI
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stable
+        run: cargo test
+      - name: Stable (no default features)
+        run: cargo test -p alacritty_terminal --no-default-features
+      - name: Oldstable
+        run: |
+          rustup default $(cat Cargo.toml | grep "rust-version" | sed 's/.*"\(.*\)".*/\1/')
+          cargo test
+      - name: Clippy
+        run: |
+          rustup component add clippy
+          cargo clippy --all-targets
+  check-macos-x86_64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install target
+        run: rustup update && rustup target add x86_64-apple-darwin
+      - name: Build
+        run: cargo build --target=x86_64-apple-darwin

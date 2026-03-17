@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT -->
+<component type="desktop-application">
+  <id>org.alacritty.Alacritty</id>
+
+  <developer_name>Christian Duerr</developer_name>
+  <developer id="org.alacritty">
+    <name>Christian Duerr</name>
+  </developer>
+
+  <name>Alacritty</name>
+
+  <project_license>Apache-2.0</project_license>
+  <metadata_license>MIT</metadata_license>
+
+  <summary>A cross-platform, OpenGL terminal emulator</summary>
+  <description>
+    <p>
+      Alacritty is a modern terminal emulator that comes with sensible defaults,
+      but allows for extensive configuration. By integrating with other
+      applications, rather than reimplementing their functionality, it manages
+      to provide a flexible set of features with high performance.
+    </p>
+    <ul>
+      <li>Wayland native</li>
+      <li>X11 native</li>
+      <li>DE agnostic</li>
+    </ul>
+  </description>
+
+  <categories>
+    <category>TerminalEmulator</category>
+  </categories>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/alacritty/alacritty/0a1e735cf6b13da1dbe5d161d17c8aa6c1692204/extra/promo/alacritty-readme.png</image>
+      <caption>Alacritty with default theme showing neovim</caption>
+    </screenshot>
+  </screenshots>
+
+  <url type="homepage">https://github.com/alacritty/alacritty</url>
+  <url type="bugtracker">https://github.com/alacritty/alacritty/issues</url>
+
+  <launchable type="desktop-id">Alacritty.desktop</launchable>
+
+  <content_rating type="oars-1.0" />
+</component>

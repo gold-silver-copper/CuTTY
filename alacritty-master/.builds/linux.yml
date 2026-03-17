@@ -1,0 +1,50 @@
+image: archlinux
+
+packages:
+  - pkg-config
+  - cmake
+  - make
+  - freetype2
+  - fontconfig
+  - libxcb
+  - libxkbcommon
+  - scdoc
+
+sources:
+  - https://github.com/alacritty/alacritty
+
+environment:
+  PATH: /home/build/.cargo/bin:/usr/bin/
+
+tasks:
+  - rustup: |
+      curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable --profile minimal
+  - rustfmt: |
+      cd alacritty
+      rustup toolchain install nightly -c rustfmt
+      cargo +nightly fmt -- --check
+  - man-pages: |
+      cd alacritty
+      cat extra/man/alacritty.1.scd | scdoc > /dev/null
+      cat extra/man/alacritty-msg.1.scd | scdoc > /dev/null
+      cat extra/man/alacritty.5.scd | scdoc > /dev/null
+      cat extra/man/alacritty-bindings.5.scd | scdoc > /dev/null
+  - test: |
+      cd alacritty
+      cargo test
+  - oldstable: |
+      cd alacritty
+      oldstable=$(cat Cargo.toml | grep "rust-version" | sed 's/.*"\(.*\)".*/\1/')
+      rustup toolchain install --profile minimal $oldstable
+      rustup default $oldstable
+      cargo test
+  - clippy: |
+      cd alacritty
+      rustup component add clippy
+      cargo clippy --all-targets
+  - feature-wayland: |
+      cd alacritty/alacritty
+      RUSTFLAGS="-D warnings" cargo test --no-default-features --features=wayland
+  - feature-x11: |
+      cd alacritty/alacritty
+      RUSTFLAGS="-D warnings" cargo test --no-default-features --features=x11

@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "alacritty",
+    "alacritty_terminal",
+    "alacritty_config",
+    "alacritty_config_derive",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85.0"
+
+[profile.release]
+lto = "thin"
+debug = 1
+incremental = false
+
+[workspace.dependencies]
+toml = "0.9.11"
+toml_edit = "0.24.0"
