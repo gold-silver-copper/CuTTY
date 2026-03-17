@@ -260,8 +260,9 @@ fn paint_terminal(
         }
     }
 
-    if !terminal.hide_cursor() {
-        let (row, col) = terminal.cursor_position();
+    if !terminal.hide_cursor()
+        && let Some((row, col)) = terminal.visible_cursor_position()
+    {
         let x = PADDING_X + col as f32 * metrics.width;
         let y = PADDING_Y + row as f32 * metrics.height;
         let rect = Rect::new(
