@@ -172,10 +172,13 @@ impl AppState {
         }
 
         if resize_window {
-            let size = window_size_for_grid(cols, rows, self.text.metrics());
+            let size = self.window.request_inner_size(window_size_for_grid(
+                cols,
+                rows,
+                self.text.metrics(),
+            ));
             self.resize_controller
                 .request_grid_preserving_resize(cols, rows, size);
-            let _ = self.window.window.request_inner_size(size);
         }
     }
 
@@ -208,8 +211,11 @@ impl AppState {
     }
 
     fn adjust_font_size(&mut self, delta: f32) {
-        if self.text.adjust_font_size(delta) {
-            let (rows, cols) = self.terminal.size();
+        let (rows, cols) = self.terminal.size();
+        if self
+            .text
+            .adjust_font_size_to_window(delta, cols, rows, self.window.max_render_size())
+        {
             self.apply_terminal_size(cols, rows, true);
             self.window.request_redraw();
         }

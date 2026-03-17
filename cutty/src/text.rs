@@ -65,19 +65,23 @@ impl TextSystem {
 
     pub fn adjust_font_size(&mut self, delta: f32) -> bool {
         let new_size = (self.font.size + delta).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
-        if (new_size - self.font.size).abs() < f32::EPSILON {
-            return false;
-        }
+        self.set_font_size(new_size)
+    }
 
-        self.font.size = new_size;
-        self.metrics = measure_cell_metrics(
-            &mut self.font_cx,
-            &mut self.layout_cx,
-            &self.font,
-            &self.font_family,
-        );
-        self.invalidate_rows();
-        true
+    pub fn adjust_font_size_to_window(
+        &mut self,
+        delta: f32,
+        cols: u16,
+        rows: u16,
+        max_window_size: PhysicalSize<u32>,
+    ) -> bool {
+        let requested = (self.font.size + delta).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+        let new_size = if delta > 0.0 {
+            self.max_font_size_for_grid(cols, rows, max_window_size, requested)
+        } else {
+            requested
+        };
+        self.set_font_size(new_size)
     }
 
     pub fn visible_grid(&self, size: PhysicalSize<u32>) -> (u16, u16) {
@@ -164,6 +168,76 @@ impl TextSystem {
         layout.align(None, Alignment::Start, AlignmentOptions::default());
         layout
     }
+
+    fn set_font_size(&mut self, size: f32) -> bool {
+        if (size - self.font.size).abs() < f32::EPSILON {
+            return false;
+        }
+
+        self.font.size = size;
+        self.metrics = self.measure_metrics_for_size(size);
+        self.invalidate_rows();
+        true
+    }
+
+    fn max_font_size_for_grid(
+        &mut self,
+        cols: u16,
+        rows: u16,
+        max_window_size: PhysicalSize<u32>,
+        requested: f32,
+    ) -> f32 {
+        if self.grid_fits_window(cols, rows, max_window_size, requested) {
+            return requested;
+        }
+
+        let mut low = self.font.size;
+        let mut high = requested;
+        for _ in 0..16 {
+            let mid = ((low + high) / 2.0).floor().max(low);
+            if (high - low).abs() < 0.01 || (mid - low).abs() < 0.01 {
+                break;
+            }
+
+            if self.grid_fits_window(cols, rows, max_window_size, mid) {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+
+        low
+    }
+
+    fn grid_fits_window(
+        &mut self,
+        cols: u16,
+        rows: u16,
+        max_window_size: PhysicalSize<u32>,
+        font_size: f32,
+    ) -> bool {
+        let metrics = self.measure_metrics_for_size(font_size);
+        let required_size = grid_pixel_size(cols, rows, metrics);
+        required_size.width <= max_window_size.width
+            && required_size.height <= max_window_size.height
+    }
+
+    fn measure_metrics_for_size(&mut self, font_size: f32) -> CellMetrics {
+        let mut font = self.font.clone();
+        font.size = font_size;
+        measure_cell_metrics(
+            &mut self.font_cx,
+            &mut self.layout_cx,
+            &font,
+            &self.font_family,
+        )
+    }
+}
+
+fn grid_pixel_size(cols: u16, rows: u16, metrics: CellMetrics) -> PhysicalSize<u32> {
+    let width = (cols as f32 * metrics.width + PADDING_X * 2.0).ceil() as u32;
+    let height = (rows as f32 * metrics.height + PADDING_Y * 2.0).ceil() as u32;
+    PhysicalSize::new(width, height)
 }
 
 fn measure_cell_metrics(
@@ -196,8 +270,9 @@ fn color_from_rgb(color: crate::terminal::Rgb) -> Color {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_FONT_SIZE, MIN_FONT_SIZE, TextSystem};
+    use super::{MAX_FONT_SIZE, MIN_FONT_SIZE, TextSystem, grid_pixel_size};
     use crate::config::FontConfig;
+    use winit::dpi::PhysicalSize;
 
     #[test]
     fn font_size_adjustment_recomputes_metrics() {
@@ -222,5 +297,19 @@ mod tests {
 
         assert!(text.adjust_font_size(MAX_FONT_SIZE));
         assert!(!text.adjust_font_size(1.0));
+    }
+
+    #[test]
+    fn font_growth_stops_at_window_limit() {
+        let font = FontConfig::default();
+        let mut text = TextSystem::new(24, &font);
+        let limit = grid_pixel_size(80, 24, text.metrics());
+
+        assert!(!text.adjust_font_size_to_window(
+            1.0,
+            80,
+            24,
+            PhysicalSize::new(limit.width, limit.height)
+        ));
     }
 }

@@ -27,20 +27,28 @@ pub struct GpuWindow {
     surface: Box<RenderSurface<'static>>,
     scene: Scene,
     valid_surface: bool,
+    max_surface_dimension: u32,
     pub window: Arc<Window>,
 }
 
 impl GpuWindow {
     pub fn new(event_loop: &ActiveEventLoop, title: &str, size: (u32, u32)) -> Result<Self> {
-        let window = create_window(event_loop, title, size);
+        let default_limit = wgpu::Limits::default().max_texture_dimension_2d;
+        let requested_size = PhysicalSize::new(size.0, size.1);
+        let clamped_size = clamp_render_size(requested_size, default_limit);
+        let window = create_window(event_loop, title, (clamped_size.width, clamped_size.height));
         let mut context = RenderContext::new();
         let surface = pollster::block_on(context.create_surface(
             window.clone(),
-            size.0,
-            size.1,
+            clamped_size.width,
+            clamped_size.height,
             wgpu::PresentMode::AutoVsync,
         ))
         .context("failed to create Vello surface")?;
+        let max_surface_dimension = context.devices[surface.dev_id]
+            .device
+            .limits()
+            .max_texture_dimension_2d;
 
         let mut renderers = Vec::new();
         renderers.resize_with(context.devices.len(), || None);
@@ -58,23 +66,39 @@ impl GpuWindow {
             surface: Box::new(surface),
             scene: Scene::new(),
             valid_surface: true,
+            max_surface_dimension,
             window,
         })
     }
 
     pub fn inner_size(&self) -> PhysicalSize<u32> {
-        self.window.inner_size()
+        self.clamp_render_size(self.window.inner_size())
+    }
+
+    pub fn max_render_size(&self) -> PhysicalSize<u32> {
+        PhysicalSize::new(self.max_surface_dimension, self.max_surface_dimension)
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
+        let size = self.clamp_render_size(size);
         if size.width == 0 || size.height == 0 {
             self.valid_surface = false;
             return;
         }
 
+        if self.window.inner_size() != size {
+            let _ = self.window.request_inner_size(size);
+        }
+
         self.context
             .resize_surface(&mut self.surface, size.width, size.height);
         self.valid_surface = true;
+    }
+
+    pub fn request_inner_size(&self, size: PhysicalSize<u32>) -> PhysicalSize<u32> {
+        let size = self.clamp_render_size(size);
+        let _ = self.window.request_inner_size(size);
+        size
     }
 
     pub fn request_redraw(&self) {
@@ -147,6 +171,12 @@ impl GpuWindow {
     }
 }
 
+impl GpuWindow {
+    fn clamp_render_size(&self, size: PhysicalSize<u32>) -> PhysicalSize<u32> {
+        clamp_render_size(size, self.max_surface_dimension)
+    }
+}
+
 fn create_window(event_loop: &ActiveEventLoop, title: &str, size: (u32, u32)) -> Arc<Window> {
     let attrs = Window::default_attributes()
         .with_inner_size(LogicalSize::new(size.0, size.1))
@@ -156,6 +186,13 @@ fn create_window(event_loop: &ActiveEventLoop, title: &str, size: (u32, u32)) ->
         event_loop
             .create_window(attrs)
             .expect("window creation failed"),
+    )
+}
+
+fn clamp_render_size(size: PhysicalSize<u32>, max_dimension: u32) -> PhysicalSize<u32> {
+    PhysicalSize::new(
+        size.width.min(max_dimension),
+        size.height.min(max_dimension),
     )
 }
 
@@ -241,6 +278,20 @@ fn paint_terminal(
             color_with_alpha(CURSOR_COLOR, 0.35),
             None,
             &rect,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_render_size;
+    use winit::dpi::PhysicalSize;
+
+    #[test]
+    fn render_size_is_clamped_to_gpu_limits() {
+        assert_eq!(
+            clamp_render_size(PhysicalSize::new(9000, 7000), 8192),
+            PhysicalSize::new(8192, 7000)
         );
     }
 }
