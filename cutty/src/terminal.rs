@@ -614,14 +614,25 @@ impl ScreenBuffer {
         self.rebuild_projection(cols);
         let target_row = row.min(self.physical_rows.saturating_sub(1));
         let absolute_row = self.projection.live_start + target_row as usize;
-        let line_index = self.materialize_absolute_row(cols, absolute_row, seqno);
-        self.rebuild_projection(cols);
-        let projected = self
+        let mut projected = self
             .projection
             .rows
             .get(absolute_row)
             .cloned()
-            .expect("materialized row exists");
+            .expect("projected row exists");
+        let line_index = if let Some(line_index) = projected.line_index {
+            line_index
+        } else {
+            let line_index = self.materialize_absolute_row(cols, absolute_row, seqno);
+            self.rebuild_projection(cols);
+            projected = self
+                .projection
+                .rows
+                .get(absolute_row)
+                .cloned()
+                .expect("materialized row exists");
+            line_index
+        };
         let max_col = cols.saturating_sub(1);
         let cursor_col = col.min(max_col) as usize;
         self.cursor = CanonicalCursor {
@@ -840,6 +851,27 @@ impl ScreenBuffer {
 
     fn line_mut(&mut self, line_index: usize) -> &mut LogicalLine {
         self.lines.get_mut(line_index).expect("line exists")
+    }
+
+    fn projected_row_snapshot(&mut self, cols: u16, absolute_row: usize) -> Option<ProjectedRow> {
+        self.rebuild_projection(cols);
+        self.projection.rows.get(absolute_row).cloned()
+    }
+
+    fn clear_projected_row_range(
+        &mut self,
+        row: &ProjectedRow,
+        start_col: usize,
+        end_col: usize,
+        width: usize,
+        seqno: u64,
+    ) {
+        let Some(line_index) = row.line_index else {
+            return;
+        };
+        let start = row.start_col + start_col.min(width);
+        let end = row.start_col + end_col.min(width);
+        self.clear_range(line_index, start, end, seqno);
     }
 
     fn clear_cell(&mut self, line_index: usize, col: usize, seqno: u64) {
@@ -1578,6 +1610,7 @@ impl TerminalState {
 
     pub fn erase_in_display(&mut self, mode: u16) {
         let cols = self.cols;
+        let width = cols as usize;
         let seqno = self.bump_seqno();
         match mode {
             3 => self.active_buffer_mut().clear_scrollback(cols),
@@ -1586,33 +1619,42 @@ impl TerminalState {
                     let buffer = self.active_buffer_mut();
                     buffer.current_screen_row(cols)
                 };
-                for row in 0..cursor_row {
+                for row in (0..cursor_row).rev() {
                     let absolute = self.active_buffer().projection.live_start + row as usize;
-                    let line = self
-                        .active_buffer_mut()
-                        .materialize_absolute_row(cols, absolute, seqno);
-                    self.active_buffer_mut()
-                        .clear_range(line, 0, usize::MAX, seqno);
+                    let snapshot = {
+                        let buffer = self.active_buffer_mut();
+                        buffer.projected_row_snapshot(cols, absolute)
+                    };
+                    if let Some(snapshot) = snapshot {
+                        self.active_buffer_mut()
+                            .clear_projected_row_range(&snapshot, 0, width, width, seqno);
+                    }
                 }
                 let cursor_col = {
                     let buffer = self.active_buffer_mut();
                     buffer.current_screen_col(cols) as usize + 1
                 };
                 let absolute = self.active_buffer().projection.live_start + cursor_row as usize;
-                let line = self
-                    .active_buffer_mut()
-                    .materialize_absolute_row(cols, absolute, seqno);
-                self.active_buffer_mut()
-                    .clear_range(line, 0, cursor_col, seqno);
+                let snapshot = {
+                    let buffer = self.active_buffer_mut();
+                    buffer.projected_row_snapshot(cols, absolute)
+                };
+                if let Some(snapshot) = snapshot {
+                    self.active_buffer_mut()
+                        .clear_projected_row_range(&snapshot, 0, cursor_col, width, seqno);
+                }
             }
             2 => {
-                for row in 0..self.rows {
+                for row in (0..self.rows).rev() {
                     let absolute = self.active_buffer().projection.live_start + row as usize;
-                    let line = self
-                        .active_buffer_mut()
-                        .materialize_absolute_row(cols, absolute, seqno);
-                    self.active_buffer_mut()
-                        .clear_range(line, 0, usize::MAX, seqno);
+                    let snapshot = {
+                        let buffer = self.active_buffer_mut();
+                        buffer.projected_row_snapshot(cols, absolute)
+                    };
+                    if let Some(snapshot) = snapshot {
+                        self.active_buffer_mut()
+                            .clear_projected_row_range(&snapshot, 0, width, width, seqno);
+                    }
                 }
             }
             _ => {
@@ -1625,18 +1667,24 @@ impl TerminalState {
                     buffer.current_screen_col(cols) as usize
                 };
                 let absolute = self.active_buffer().projection.live_start + cursor_row as usize;
-                let line = self
-                    .active_buffer_mut()
-                    .materialize_absolute_row(cols, absolute, seqno);
-                self.active_buffer_mut()
-                    .clear_range(line, cursor_col, usize::MAX, seqno);
-                for row in cursor_row + 1..self.rows {
-                    let absolute = self.active_buffer().projection.live_start + row as usize;
-                    let line = self
-                        .active_buffer_mut()
-                        .materialize_absolute_row(cols, absolute, seqno);
+                let snapshot = {
+                    let buffer = self.active_buffer_mut();
+                    buffer.projected_row_snapshot(cols, absolute)
+                };
+                if let Some(snapshot) = snapshot {
                     self.active_buffer_mut()
-                        .clear_range(line, 0, usize::MAX, seqno);
+                        .clear_projected_row_range(&snapshot, cursor_col, width, width, seqno);
+                }
+                for row in ((cursor_row + 1)..self.rows).rev() {
+                    let absolute = self.active_buffer().projection.live_start + row as usize;
+                    let snapshot = {
+                        let buffer = self.active_buffer_mut();
+                        buffer.projected_row_snapshot(cols, absolute)
+                    };
+                    if let Some(snapshot) = snapshot {
+                        self.active_buffer_mut()
+                            .clear_projected_row_range(&snapshot, 0, width, width, seqno);
+                    }
                 }
             }
         }
@@ -1645,23 +1693,31 @@ impl TerminalState {
 
     pub fn erase_in_line(&mut self, mode: u16) {
         let cols = self.cols;
+        let width = cols as usize;
         let seqno = self.bump_seqno();
         let absolute = self.active_buffer().projection.live_start
             + self.active_buffer().projection.cursor_live.row as usize;
-        let line = self
-            .active_buffer_mut()
-            .materialize_absolute_row(cols, absolute, seqno);
+        let snapshot = {
+            let buffer = self.active_buffer_mut();
+            buffer.projected_row_snapshot(cols, absolute)
+        };
         let cursor_col = self.active_buffer().projection.cursor_live.col as usize;
-        match mode {
-            1 => self
-                .active_buffer_mut()
-                .clear_range(line, 0, cursor_col + 1, seqno),
-            2 => self
-                .active_buffer_mut()
-                .clear_range(line, 0, usize::MAX, seqno),
-            _ => self
-                .active_buffer_mut()
-                .clear_range(line, cursor_col, usize::MAX, seqno),
+        if let Some(snapshot) = snapshot {
+            match mode {
+                1 => self.active_buffer_mut().clear_projected_row_range(
+                    &snapshot,
+                    0,
+                    cursor_col + 1,
+                    width,
+                    seqno,
+                ),
+                2 => self
+                    .active_buffer_mut()
+                    .clear_projected_row_range(&snapshot, 0, width, width, seqno),
+                _ => self
+                    .active_buffer_mut()
+                    .clear_projected_row_range(&snapshot, cursor_col, width, width, seqno),
+            }
         }
         self.refresh_projections();
     }
@@ -2153,6 +2209,39 @@ mod tests {
         assert_eq!(
             terminal.visible_row(1).expect("row").text_range(0, 5),
             "$ pwd"
+        );
+    }
+
+    #[test]
+    fn wrapped_prompt_redraw_after_resize_does_not_create_extra_prompt_line() {
+        let prompt = "(base) kisaczka@Mac ~ %    ";
+        let mut terminal = TerminalState::new(4, 12, 64);
+        for ch in prompt.chars() {
+            terminal.print(ch);
+        }
+
+        terminal.resize(4, 10);
+        terminal.set_cursor_position(0, 0);
+        terminal.erase_in_display(0);
+        for ch in prompt.chars() {
+            terminal.print(ch);
+        }
+
+        assert_eq!(
+            terminal.visible_row(0).expect("row").text_range(0, 10),
+            "(base) kis"
+        );
+        assert_eq!(
+            terminal.visible_row(1).expect("row").text_range(0, 10),
+            "aczka@Mac "
+        );
+        assert_eq!(
+            terminal.visible_row(2).expect("row").text_range(0, 10),
+            "~ %       "
+        );
+        assert_eq!(
+            terminal.visible_row(3).expect("row").text_range(0, 10),
+            "          "
         );
     }
 
