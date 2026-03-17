@@ -2,5 +2,10 @@
 name = "cutty"
 version = "0.1.0"
 edition = "2024"
+description = "Core library crate for CuTTY, a wgpu-powered terminal emulator."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/gold-silver-copper/CuTTY"
+homepage = "https://github.com/gold-silver-copper/CuTTY"
 
 [dependencies]
