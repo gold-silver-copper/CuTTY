@@ -1,5 +1,6 @@
-use std::collections::VecDeque;
+pub mod grid;
 
+use self::grid::{GridCell, GridRow, Line, RowStorage};
 use unicode_width::UnicodeWidthChar;
 
 pub type StableRowIndex = usize;
@@ -113,9 +114,20 @@ impl TerminalCell {
     }
 }
 
+impl GridCell for TerminalCell {
+    fn is_empty(&self) -> bool {
+        self.is_blank()
+    }
+
+    fn reset(&mut self, template: &Self) {
+        *self = template.clone();
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BufferRow {
     cells: Vec<TerminalCell>,
+    occ: usize,
     wrapped: bool,
     seqno: u64,
 }
@@ -139,12 +151,10 @@ impl BufferRow {
         self.seqno
     }
 
-    fn from_cells(mut cells: Vec<TerminalCell>, wrapped: bool, seqno: u64) -> Self {
-        if !wrapped {
-            trim_trailing_blank_cells(&mut cells);
-        }
+    fn from_cells(cells: Vec<TerminalCell>, occ: usize, wrapped: bool, seqno: u64) -> Self {
         Self {
             cells,
+            occ,
             wrapped,
             seqno,
         }
@@ -238,26 +248,41 @@ type StableRowId = u64;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Row {
     id: StableRowId,
-    cells: Vec<TerminalCell>,
+    cells: GridRow<TerminalCell>,
+    occ: usize,
     wrapped: bool,
     seqno: u64,
 }
 
 impl Row {
-    fn blank(id: StableRowId, seqno: u64) -> Self {
+    fn blank(id: StableRowId, width: usize, seqno: u64) -> Self {
         Self {
             id,
-            cells: Vec::new(),
+            cells: GridRow::new(width.max(1)),
+            occ: 0,
             wrapped: false,
             seqno,
         }
     }
 
     fn snapshot(&self) -> BufferRow {
-        BufferRow::from_cells(self.cells.clone(), self.wrapped, self.seqno)
+        BufferRow::from_cells(self.cells.to_vec(), self.occ, self.wrapped, self.seqno)
     }
 
     fn touch(&mut self, seqno: u64) {
+        self.seqno = seqno;
+    }
+
+    fn grow(&mut self, width: usize) {
+        self.cells.grow(width);
+    }
+
+    fn reset_blank(&mut self, width: usize, id: StableRowId, seqno: u64) {
+        self.cells.grow(width.max(1));
+        self.cells.reset(&TerminalCell::blank());
+        self.id = id;
+        self.occ = 0;
+        self.wrapped = false;
         self.seqno = seqno;
     }
 }
@@ -269,56 +294,78 @@ struct RenderSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ScreenBuffer {
-    rows: VecDeque<Row>,
+    rows: RowStorage<Row>,
     render: RenderSnapshot,
     visible_rows: u16,
     stable_row_offset: usize,
-    viewport_top: Option<StableRowIndex>,
+    display_offset: usize,
     cursor: GridCursor,
     saved_cursor: SavedCursor,
     attrs: CellAttributes,
     scroll_top: u16,
     scroll_bottom: u16,
     pending_wrap: bool,
+    current_input_start: Option<StableRowId>,
     next_row_id: StableRowId,
 }
 
 impl ScreenBuffer {
-    fn new(rows: u16, seqno: u64) -> Self {
+    fn new(rows: u16, cols: u16, seqno: u64) -> Self {
         let visible_rows = rows.max(1);
+        let width = cols.max(1) as usize;
+        let mut next_row_id: StableRowId = 1;
+        let rows_storage = RowStorage::with_capacity(visible_rows as usize, || {
+            let id = next_row_id;
+            next_row_id = next_row_id.saturating_add(1);
+            Row::blank(id, width, seqno)
+        });
         let mut buffer = Self {
-            rows: VecDeque::new(),
+            rows: rows_storage,
             render: RenderSnapshot::default(),
             visible_rows,
             stable_row_offset: 0,
-            viewport_top: None,
+            display_offset: 0,
             cursor: GridCursor::default(),
             saved_cursor: SavedCursor::default(),
             attrs: CellAttributes::default(),
             scroll_top: 0,
             scroll_bottom: visible_rows.saturating_sub(1),
             pending_wrap: false,
-            next_row_id: 1,
+            current_input_start: None,
+            next_row_id,
         };
-        buffer.fill_blank_rows(visible_rows as usize, seqno, FillDirection::Back);
+        buffer.current_input_start = buffer
+            .rows
+            .get(buffer.rows.len().saturating_sub(1))
+            .map(|row| row.id);
         buffer.rebuild_snapshot();
         buffer
     }
 
-    fn reset(&mut self, rows: u16, seqno: u64) {
-        self.rows.clear();
+    fn reset(&mut self, rows: u16, cols: u16, seqno: u64) {
         self.render.rows.clear();
         self.visible_rows = rows.max(1);
         self.stable_row_offset = 0;
-        self.viewport_top = None;
+        self.display_offset = 0;
         self.cursor = GridCursor::default();
         self.saved_cursor = SavedCursor::default();
         self.attrs = CellAttributes::default();
         self.scroll_top = 0;
         self.scroll_bottom = self.visible_rows.saturating_sub(1);
         self.pending_wrap = false;
-        self.next_row_id = 1;
-        self.fill_blank_rows(self.visible_rows as usize, seqno, FillDirection::Back);
+        self.current_input_start = None;
+        let width = cols.max(1) as usize;
+        let mut next_row_id: StableRowId = 1;
+        self.rows = RowStorage::with_capacity(self.visible_rows as usize, || {
+            let id = next_row_id;
+            next_row_id = next_row_id.saturating_add(1);
+            Row::blank(id, width, seqno)
+        });
+        self.next_row_id = next_row_id;
+        self.current_input_start = self
+            .rows
+            .get(self.rows.len().saturating_sub(1))
+            .map(|row| row.id);
         self.rebuild_snapshot();
     }
 
@@ -338,93 +385,81 @@ impl ScreenBuffer {
         id
     }
 
-    fn blank_row(&mut self, seqno: u64) -> Row {
-        Row::blank(self.alloc_row_id(), seqno)
+    fn current_input_absolute_index(&self) -> Option<usize> {
+        let id = self.current_input_start?;
+        self.rows.iter().position(|row| row.id == id)
     }
 
-    fn fill_blank_rows(&mut self, count: usize, seqno: u64, direction: FillDirection) {
-        for _ in 0..count {
-            let row = self.blank_row(seqno);
-            match direction {
-                FillDirection::Front => self.rows.push_front(row),
-                FillDirection::Back => self.rows.push_back(row),
-            }
+    fn reconcile_current_input_start(&mut self) {
+        if self
+            .current_input_start
+            .is_some_and(|id| !self.rows.iter().any(|row| row.id == id))
+        {
+            self.current_input_start = self
+                .rows
+                .get(self.rows.len().saturating_sub(1))
+                .map(|row| row.id);
         }
+    }
+
+    fn fill_blank_rows(&mut self, count: usize, width: usize, seqno: u64) {
+        let mut next_row_id = self.next_row_id;
+        self.rows.initialize(count, || {
+            let id = next_row_id;
+            next_row_id = next_row_id.saturating_add(1);
+            Row::blank(id, width, seqno)
+        });
+        self.next_row_id = next_row_id;
     }
 
     fn rebuild_snapshot(&mut self) {
         self.render.rows = self.rows.iter().map(Row::snapshot).collect();
-        self.clamp_viewport_top();
+        self.clamp_display_offset();
     }
 
-    fn clamp_viewport_top(&mut self) {
-        let max_top = self.max_viewport_top();
-        if let Some(top) = self.viewport_top {
-            self.viewport_top = (top < max_top).then_some(top).or_else(|| {
-                if max_top == self.stable_row_offset {
-                    None
-                } else {
-                    Some(max_top)
-                }
-            });
-            if self.viewport_top == Some(max_top) {
-                self.viewport_top = None;
-            }
-        }
+    fn history_size(&self) -> usize {
+        self.rows.len().saturating_sub(self.visible_rows as usize)
     }
 
-    fn max_viewport_top(&self) -> StableRowIndex {
-        self.stable_row_offset + self.rows.len().saturating_sub(self.visible_rows as usize)
-    }
-
-    fn resolved_viewport_top(&self) -> StableRowIndex {
-        self.viewport_top.unwrap_or_else(|| self.max_viewport_top())
+    fn clamp_display_offset(&mut self) {
+        self.display_offset = self.display_offset.min(self.history_size());
     }
 
     fn viewport_top(&self) -> StableRowIndex {
-        self.resolved_viewport_top()
+        self.stable_row_offset + self.history_size().saturating_sub(self.display_offset)
     }
 
     fn set_viewport_bottom_follow(&mut self) -> bool {
-        let changed = self.viewport_top.is_some();
-        self.viewport_top = None;
+        let changed = self.display_offset != 0;
+        self.display_offset = 0;
         changed
     }
 
     fn scroll_viewport_up(&mut self, rows: u16) -> bool {
-        let next = self
-            .resolved_viewport_top()
-            .saturating_sub(rows.max(1) as usize)
-            .max(self.stable_row_offset);
-        if next == self.resolved_viewport_top() {
+        let next = (self.display_offset + rows.max(1) as usize).min(self.history_size());
+        if next == self.display_offset {
             return false;
         }
-        self.viewport_top = Some(next);
+        self.display_offset = next;
         true
     }
 
     fn scroll_viewport_down(&mut self, rows: u16) -> bool {
-        let max_top = self.max_viewport_top();
-        let next = (self.resolved_viewport_top() + rows.max(1) as usize).min(max_top);
-        if next == max_top {
-            let changed = self.viewport_top.is_some();
-            self.viewport_top = None;
-            return changed;
-        }
-        if Some(next) == self.viewport_top {
+        let next = self.display_offset.saturating_sub(rows.max(1) as usize);
+        if next == self.display_offset {
             return false;
         }
-        self.viewport_top = Some(next);
+        self.display_offset = next;
         true
     }
 
     fn visible_row_to_stable_row(&self, row: u16) -> StableRowIndex {
         let max_row = self.visible_rows.saturating_sub(1);
-        self.resolved_viewport_top() + row.min(max_row) as usize
+        self.viewport_top() + row.min(max_row) as usize
     }
 
     fn stable_row_to_visible_row(&self, stable_row: StableRowIndex) -> Option<u16> {
-        let top = self.resolved_viewport_top();
+        let top = self.viewport_top();
         let bottom = top + self.visible_rows as usize;
         (stable_row >= top && stable_row < bottom).then_some((stable_row - top) as u16)
     }
@@ -467,33 +502,88 @@ impl ScreenBuffer {
         self.rows.get(absolute).expect("row exists")
     }
 
-    fn resize_height(&mut self, rows: u16, seqno: u64) {
+    fn resize_height(&mut self, rows: u16, cols: u16, scrollback_limit: usize, seqno: u64) {
         let rows = rows.max(1);
-        let old_live_start = self.live_start();
-        let cursor_abs = old_live_start + self.cursor.row as usize;
-        let saved_abs = old_live_start + self.saved_cursor.cursor.row as usize;
-
-        self.visible_rows = rows;
-        self.scroll_top = 0;
-        self.scroll_bottom = rows.saturating_sub(1);
-
-        let mut cursor_abs = cursor_abs.min(self.rows.len().saturating_sub(1));
-        let mut saved_abs = saved_abs.min(self.rows.len().saturating_sub(1));
-        if self.rows.len() < rows as usize {
-            let add = rows as usize - self.rows.len();
-            self.fill_blank_rows(add, seqno, FillDirection::Front);
-            cursor_abs += add;
-            saved_abs += add;
+        let width = cols.max(1) as usize;
+        match self.visible_rows.cmp(&rows) {
+            std::cmp::Ordering::Less => {
+                self.grow_visible_rows(rows, width, scrollback_limit, seqno)
+            }
+            std::cmp::Ordering::Greater => {
+                self.shrink_visible_rows(rows, width, scrollback_limit, seqno)
+            }
+            std::cmp::Ordering::Equal => {}
         }
 
-        let live_start = self.live_start();
-        self.cursor.row = cursor_abs
-            .saturating_sub(live_start)
-            .min(rows.saturating_sub(1) as usize) as u16;
-        self.saved_cursor.cursor.row = saved_abs
-            .saturating_sub(live_start)
-            .min(rows.saturating_sub(1) as usize) as u16;
+        self.scroll_top = 0;
+        self.scroll_bottom = rows.saturating_sub(1);
+        self.saved_cursor.cursor.row = self.saved_cursor.cursor.row.min(rows.saturating_sub(1));
+        self.reconcile_current_input_start();
         self.rebuild_snapshot();
+    }
+
+    fn grow_visible_rows(&mut self, rows: u16, width: usize, scrollback_limit: usize, seqno: u64) {
+        let lines_added = rows.saturating_sub(self.visible_rows) as usize;
+        if lines_added == 0 {
+            return;
+        }
+
+        let mut next_row_id = self.next_row_id;
+        self.rows.grow_visible_lines(rows as usize, || {
+            let id = next_row_id;
+            next_row_id = next_row_id.saturating_add(1);
+            Row::blank(id, width, seqno)
+        });
+        self.next_row_id = next_row_id;
+        self.visible_rows = rows;
+
+        let from_history = self.history_size().min(lines_added);
+        if from_history != lines_added {
+            let delta = lines_added - from_history;
+            self.scroll_up_range(
+                0,
+                rows.saturating_sub(1),
+                delta,
+                width,
+                scrollback_limit,
+                seqno,
+            );
+        }
+
+        self.cursor.row =
+            (self.cursor.row as usize + from_history).min(rows.saturating_sub(1) as usize) as u16;
+        self.saved_cursor.cursor.row = (self.saved_cursor.cursor.row as usize + from_history)
+            .min(rows.saturating_sub(1) as usize) as u16;
+        self.display_offset = self.display_offset.saturating_sub(lines_added);
+    }
+
+    fn shrink_visible_rows(
+        &mut self,
+        rows: u16,
+        width: usize,
+        scrollback_limit: usize,
+        seqno: u64,
+    ) {
+        let target = rows.max(1);
+        let required_scrolling = (self.cursor.row as usize + 1).saturating_sub(target as usize);
+        if required_scrolling > 0 {
+            let old_visible = self.visible_rows;
+            self.scroll_top = 0;
+            self.scroll_bottom = old_visible.saturating_sub(1);
+            self.scroll_up_region(
+                width as u16,
+                required_scrolling as u16,
+                scrollback_limit,
+                seqno,
+            );
+            self.cursor.row = self.cursor.row.min(target.saturating_sub(1));
+        }
+
+        self.saved_cursor.cursor.row = self.saved_cursor.cursor.row.min(target.saturating_sub(1));
+        self.rows
+            .rotate((self.visible_rows.saturating_sub(target)) as isize);
+        self.rows.shrink_visible_lines(target as usize);
+        self.visible_rows = target;
     }
 
     fn trim_scrollback(&mut self, limit: usize) {
@@ -503,13 +593,12 @@ impl ScreenBuffer {
         }
 
         let remove = self.rows.len() - max_total;
-        for _ in 0..remove {
-            self.rows.pop_front();
-        }
+        let mut rows = self.rows.take_all();
+        rows.drain(0..remove);
+        self.rows.replace_inner(rows);
         self.stable_row_offset += remove;
-        if let Some(top) = self.viewport_top {
-            self.viewport_top = Some(top.max(self.stable_row_offset));
-        }
+        self.display_offset = self.display_offset.min(self.history_size());
+        self.reconcile_current_input_start();
         self.rebuild_snapshot();
     }
 
@@ -551,6 +640,127 @@ impl ScreenBuffer {
         self.absolute_screen_row(self.cursor.row)
     }
 
+    fn line_to_absolute(&self, line: Line) -> usize {
+        (line.0 + self.history_size() as i32) as usize
+    }
+
+    fn reset_line(&mut self, line: Line, width: usize, seqno: u64) {
+        let id = self.alloc_row_id();
+        let absolute = self.line_to_absolute(line);
+        self.row_mut(absolute).reset_blank(width, id, seqno);
+    }
+
+    fn scroll_up_range(
+        &mut self,
+        start: u16,
+        end: u16,
+        positions: usize,
+        width: usize,
+        scrollback_limit: usize,
+        seqno: u64,
+    ) {
+        let start = start.min(self.visible_rows.saturating_sub(1)) as usize;
+        let end = end.min(self.visible_rows.saturating_sub(1)) as usize + 1;
+        let region_len = end.saturating_sub(start);
+        let positions = positions.max(1).min(region_len.max(1));
+
+        if region_len <= positions && start != 0 {
+            for line in start..end {
+                self.reset_line(Line(line as i32), width, seqno);
+            }
+            self.reconcile_current_input_start();
+            self.rebuild_snapshot();
+            return;
+        }
+
+        if self.display_offset != 0 {
+            self.display_offset = (self.display_offset + positions).min(scrollback_limit);
+        }
+
+        if start == 0 {
+            let add = positions.min(scrollback_limit.saturating_sub(self.history_size()));
+            if add > 0 {
+                let mut next_row_id = self.next_row_id;
+                self.rows.initialize(add, || {
+                    let id = next_row_id;
+                    next_row_id = next_row_id.saturating_add(1);
+                    Row::blank(id, width, seqno)
+                });
+                self.next_row_id = next_row_id;
+            }
+
+            self.rows.rotate(-(positions as isize));
+
+            let screen_lines = self.visible_rows as i32;
+            for line in ((end as i32)..screen_lines).rev() {
+                self.rows.swap(Line(line), Line(line - positions as i32));
+            }
+        } else {
+            for line in start as i32..(end as i32 - positions as i32) {
+                self.rows.swap(Line(line), Line(line + positions as i32));
+            }
+        }
+
+        for line in (end - positions)..end {
+            self.reset_line(Line(line as i32), width, seqno);
+        }
+
+        self.reconcile_current_input_start();
+        self.rebuild_snapshot();
+    }
+
+    fn scroll_down_range(
+        &mut self,
+        start: u16,
+        end: u16,
+        positions: usize,
+        width: usize,
+        scrollback_limit: usize,
+        seqno: u64,
+    ) {
+        let start = start.min(self.visible_rows.saturating_sub(1)) as usize;
+        let end = end.min(self.visible_rows.saturating_sub(1)) as usize + 1;
+        let region_len = end.saturating_sub(start);
+        let positions = positions.max(1).min(region_len.max(1));
+
+        if region_len <= positions {
+            for line in start..end {
+                self.reset_line(Line(line as i32), width, seqno);
+            }
+            self.reconcile_current_input_start();
+            self.rebuild_snapshot();
+            return;
+        }
+
+        if scrollback_limit == 0 {
+            let screen_lines = self.visible_rows as i32;
+            for line in (end as i32..screen_lines).map(Line) {
+                self.rows.swap(line, line - positions as i32);
+            }
+
+            self.rows.rotate_down(positions);
+
+            for line in (0..positions).map(Line::from) {
+                self.reset_line(line, width, seqno);
+            }
+
+            for line in (0..start).map(Line::from) {
+                self.rows.swap(line, line + positions);
+            }
+        } else {
+            for line in ((start + positions)..end).rev().map(Line::from) {
+                self.rows.swap(line, line - positions);
+            }
+
+            for line in (start..(start + positions)).rev().map(Line::from) {
+                self.reset_line(line, width, seqno);
+            }
+        }
+
+        self.reconcile_current_input_start();
+        self.rebuild_snapshot();
+    }
+
     fn clear_row_range(
         &mut self,
         absolute: usize,
@@ -571,7 +781,8 @@ impl ScreenBuffer {
             row.wrapped = false;
         }
         normalize_cells(&mut cells, width);
-        row.cells = finalize_row_cells(cells, row.wrapped, width);
+        row.cells = GridRow::from_vec(finalize_row_cells(cells, row.wrapped, width), width);
+        row.occ = row_occupied_columns(row.cells.as_slice());
     }
 
     fn replace_row_cells(
@@ -583,7 +794,8 @@ impl ScreenBuffer {
         seqno: u64,
     ) {
         let row = self.row_mut(absolute);
-        row.cells = finalize_row_cells(cells, wrapped, width);
+        row.cells = GridRow::from_vec(finalize_row_cells(cells, wrapped, width), width);
+        row.occ = row_occupied_columns(row.cells.as_slice());
         row.wrapped = wrapped;
         row.touch(seqno);
     }
@@ -619,6 +831,9 @@ impl ScreenBuffer {
         }
 
         let absolute = self.current_absolute_row();
+        if self.current_input_start.is_none() {
+            self.current_input_start = Some(self.row(absolute).id);
+        }
         let attrs = self.attrs;
         let col = self.cursor.col as usize;
         let row = self.row_mut(absolute);
@@ -632,7 +847,8 @@ impl ScreenBuffer {
             cells[col + 1] = TerminalCell::continuation(attrs);
         }
         normalize_cells(&mut cells, width);
-        row.cells = finalize_row_cells(cells, row.wrapped, width);
+        row.cells = GridRow::from_vec(finalize_row_cells(cells, row.wrapped, width), width);
+        row.occ = row_occupied_columns(row.cells.as_slice());
         row.touch(seqno);
 
         let next_col = col + char_width;
@@ -653,7 +869,8 @@ impl ScreenBuffer {
         if let Some(target) = find_combining_target(&cells, col) {
             cells[target].contents.push(c);
             row.touch(seqno);
-            row.cells = finalize_row_cells(cells, row.wrapped, width);
+            row.cells = GridRow::from_vec(finalize_row_cells(cells, row.wrapped, width), width);
+            row.occ = row_occupied_columns(row.cells.as_slice());
         }
     }
 
@@ -663,7 +880,8 @@ impl ScreenBuffer {
         let row = self.row_mut(absolute);
         let mut cells = expanded_row_cells(row, width);
         normalize_cells(&mut cells, width);
-        row.cells = finalize_row_cells(cells, true, width);
+        row.cells = GridRow::from_vec(finalize_row_cells(cells, true, width), width);
+        row.occ = row_occupied_columns(row.cells.as_slice());
         row.wrapped = true;
         row.touch(seqno);
 
@@ -724,105 +942,120 @@ impl ScreenBuffer {
         if self.cursor.row < self.scroll_top || self.cursor.row > self.scroll_bottom {
             return;
         }
-        for _ in 0..count.max(1) {
-            let live_start = self.live_start();
-            let remove_at = live_start + self.scroll_bottom as usize;
-            self.rows.remove(remove_at);
-            let insert_at = live_start + self.cursor.row as usize;
-            let blank = self.blank_row(seqno);
-            self.rows.insert(insert_at, blank);
-        }
-        self.rebuild_snapshot();
-        self.trim_scrollback(0);
-        let _ = cols;
+        self.scroll_down_range(
+            self.cursor.row,
+            self.scroll_bottom,
+            count.max(1) as usize,
+            cols.max(1) as usize,
+            0,
+            seqno,
+        );
     }
 
     fn delete_lines(&mut self, count: u16, cols: u16, seqno: u64) {
         if self.cursor.row < self.scroll_top || self.cursor.row > self.scroll_bottom {
             return;
         }
-        for _ in 0..count.max(1) {
-            let live_start = self.live_start();
-            let remove_at = live_start + self.cursor.row as usize;
-            self.rows.remove(remove_at);
-            let insert_at = live_start + self.scroll_bottom as usize;
-            let blank = self.blank_row(seqno);
-            self.rows.insert(insert_at, blank);
-        }
-        self.rebuild_snapshot();
-        self.trim_scrollback(0);
-        let _ = cols;
+        self.scroll_up_range(
+            self.cursor.row,
+            self.scroll_bottom,
+            count.max(1) as usize,
+            cols.max(1) as usize,
+            0,
+            seqno,
+        );
     }
 
     fn scroll_up_region(&mut self, cols: u16, count: u16, scrollback_limit: usize, seqno: u64) {
-        for _ in 0..count.max(1) {
-            if self.scroll_top == 0
-                && self.scroll_bottom == self.visible_rows.saturating_sub(1)
-                && scrollback_limit > 0
-            {
-                let blank = self.blank_row(seqno);
-                self.rows.push_back(blank);
-            } else {
-                let live_start = self.live_start();
-                let remove_at = live_start + self.scroll_top as usize;
-                self.rows.remove(remove_at);
-                let insert_at = live_start + self.scroll_bottom as usize;
-                let blank = self.blank_row(seqno);
-                self.rows.insert(insert_at, blank);
-            }
-        }
-        self.rebuild_snapshot();
+        self.scroll_up_range(
+            self.scroll_top,
+            self.scroll_bottom,
+            count.max(1) as usize,
+            cols.max(1) as usize,
+            scrollback_limit,
+            seqno,
+        );
         self.trim_scrollback(scrollback_limit);
-        let _ = cols;
     }
 
-    fn scroll_down_region(&mut self, count: u16, seqno: u64) {
-        for _ in 0..count.max(1) {
-            let live_start = self.live_start();
-            let remove_at = live_start + self.scroll_bottom as usize;
-            self.rows.remove(remove_at);
-            let insert_at = live_start + self.scroll_top as usize;
-            let blank = self.blank_row(seqno);
-            self.rows.insert(insert_at, blank);
-        }
-        self.rebuild_snapshot();
+    fn scroll_down_region(&mut self, cols: u16, count: u16, scrollback_limit: usize, seqno: u64) {
+        self.scroll_down_range(
+            self.scroll_top,
+            self.scroll_bottom,
+            count.max(1) as usize,
+            cols.max(1) as usize,
+            scrollback_limit,
+            seqno,
+        );
     }
 
     fn clear_scrollback(&mut self, seqno: u64) {
         let live_start = self.live_start();
         let removed = live_start;
-        for _ in 0..removed {
-            self.rows.pop_front();
-        }
+        let mut rows = self.rows.take_all();
+        rows.drain(0..removed);
+        self.rows.replace_inner(rows);
         self.stable_row_offset += removed;
-        self.viewport_top = None;
+        self.display_offset = 0;
+        self.reconcile_current_input_start();
         let _ = seqno;
         self.rebuild_snapshot();
     }
 
-    fn resize_width(&mut self, old_cols: u16, new_cols: u16, seqno: u64) {
+    fn resize_width(&mut self, old_cols: u16, new_cols: u16, seqno: u64, allow_rewrap: bool) {
         let old_width = old_cols.max(1) as usize;
         let new_width = new_cols.max(1) as usize;
+        let old_display_offset = self.display_offset;
         if old_width == new_width || self.rows.is_empty() {
             self.rebuild_snapshot();
             return;
         }
 
-        let old_rows: Vec<Row> = self.rows.drain(..).collect();
+        if !allow_rewrap {
+            for row in self.rows.iter_mut() {
+                if new_width < old_width {
+                    let mut cells = row.cells.to_vec();
+                    cells.truncate(new_width);
+                    row.cells = GridRow::from_vec(
+                        finalize_row_cells(cells, row.wrapped, new_width),
+                        new_width,
+                    );
+                } else {
+                    row.grow(new_width);
+                }
+                row.occ = row_occupied_columns(row.cells.as_slice());
+                row.touch(seqno);
+            }
+            if self.rows.len() < self.visible_rows as usize {
+                let add = self.visible_rows as usize - self.rows.len();
+                self.fill_blank_rows(add, new_width, seqno);
+            }
+            self.cursor.col = self.cursor.col.min(new_cols.saturating_sub(1));
+            self.saved_cursor.cursor.col =
+                self.saved_cursor.cursor.col.min(new_cols.saturating_sub(1));
+            self.pending_wrap = false;
+            self.rebuild_snapshot();
+            return;
+        }
+
+        let old_rows: Vec<Row> = self.rows.take_all();
         let old_live_start = old_rows.len().saturating_sub(self.visible_rows as usize);
         let cursor_abs = old_live_start + self.cursor.row as usize;
         let saved_abs = old_live_start + self.saved_cursor.cursor.row as usize;
+        let input_start_abs = self
+            .current_input_start
+            .and_then(|id| old_rows.iter().position(|row| row.id == id));
         let viewport_abs = self
-            .viewport_top
-            .and_then(|top| top.checked_sub(self.stable_row_offset))
-            .unwrap_or(old_live_start)
+            .viewport_top()
+            .saturating_sub(self.stable_row_offset)
             .min(old_rows.len().saturating_sub(1));
 
-        let mut new_rows = VecDeque::new();
+        let mut new_rows = Vec::new();
         let mut cursor_new_abs = 0usize;
         let mut cursor_new_col = self.cursor.col as usize;
         let mut saved_new_abs = 0usize;
         let mut saved_new_col = self.saved_cursor.cursor.col as usize;
+        let mut input_start_new_abs = None;
         let mut viewport_new_abs = 0usize;
 
         let mut index = 0;
@@ -834,14 +1067,14 @@ impl ScreenBuffer {
                 let row = &old_rows[index];
                 offsets.push(logical_cells.len());
 
-                let mut segment_len = row.cells.len();
+                let mut segment_len = row.occ;
                 if index == cursor_abs {
                     segment_len = segment_len.max(self.cursor.col as usize);
                 }
                 if index == saved_abs {
                     segment_len = segment_len.max(self.saved_cursor.cursor.col as usize);
                 }
-                let mut segment = row.cells.clone();
+                let mut segment = row.cells.to_vec();
                 segment.resize(segment_len, TerminalCell::blank());
                 logical_cells.extend(segment);
 
@@ -862,9 +1095,12 @@ impl ScreenBuffer {
             for (segment_index, segment) in segments.into_iter().enumerate() {
                 let wrapped = segment_index + 1 < segment_count;
                 let id = self.alloc_row_id();
-                new_rows.push_back(Row {
+                let cells = finalize_row_cells(segment, wrapped, new_width);
+                let occ = row_occupied_columns(&cells);
+                new_rows.push(Row {
                     id,
-                    cells: finalize_row_cells(segment, wrapped, new_width),
+                    cells: GridRow::from_vec(cells, new_width),
+                    occ,
                     wrapped,
                     seqno,
                 });
@@ -885,6 +1121,14 @@ impl ScreenBuffer {
                 saved_new_abs = group_output_start + row_offset;
                 saved_new_col = col;
             }
+            if let Some(input_abs) =
+                input_start_abs.filter(|abs| *abs >= group_start && *abs < index)
+            {
+                let logical_col = offsets[input_abs - group_start];
+                let (row_offset, _) =
+                    map_logical_col_to_rows(&logical_cells, logical_col, new_width);
+                input_start_new_abs = Some(group_output_start + row_offset);
+            }
             if viewport_abs >= group_start && viewport_abs < index {
                 let logical_col = offsets[viewport_abs - group_start];
                 let (row_offset, _) =
@@ -893,13 +1137,10 @@ impl ScreenBuffer {
             }
         }
 
-        self.rows = new_rows;
+        self.rows.replace_inner(new_rows);
         if self.rows.len() < self.visible_rows as usize {
             let add = self.visible_rows as usize - self.rows.len();
-            self.fill_blank_rows(add, seqno, FillDirection::Front);
-            cursor_new_abs += add;
-            saved_new_abs += add;
-            viewport_new_abs += add;
+            self.fill_blank_rows(add, new_width, seqno);
         }
 
         let live_start = self.live_start();
@@ -912,18 +1153,16 @@ impl ScreenBuffer {
             .min(self.visible_rows.saturating_sub(1) as usize)
             as u16;
         self.saved_cursor.cursor.col = saved_new_col.min(new_width.saturating_sub(1)) as u16;
-        if self.viewport_top.is_some() {
-            self.viewport_top = Some(self.stable_row_offset + viewport_new_abs);
-        }
+        self.current_input_start =
+            input_start_new_abs.and_then(|absolute| self.rows.get(absolute).map(|row| row.id));
+        self.display_offset = if old_display_offset == 0 {
+            0
+        } else {
+            self.history_size().saturating_sub(viewport_new_abs)
+        };
         self.pending_wrap = false;
         self.rebuild_snapshot();
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FillDirection {
-    Front,
-    Back,
 }
 
 pub struct TerminalState {
@@ -946,8 +1185,8 @@ impl TerminalState {
             cols,
             scrollback_limit,
             next_seqno: 1,
-            primary: ScreenBuffer::new(rows, 0),
-            alternate: ScreenBuffer::new(rows, 0),
+            primary: ScreenBuffer::new(rows, cols, 0),
+            alternate: ScreenBuffer::new(rows, cols, 0),
             modes: TerminalModes::default(),
             tab_stops: default_tab_stops(cols),
         }
@@ -1035,12 +1274,13 @@ impl TerminalState {
 
         let seqno = self.bump_seqno();
         if cols != self.cols {
-            self.primary.resize_width(self.cols, cols, seqno);
-            self.alternate.resize_width(self.cols, cols, seqno);
+            self.primary.resize_width(self.cols, cols, seqno, true);
+            self.alternate.resize_width(self.cols, cols, seqno, false);
         }
         if rows != self.rows {
-            self.primary.resize_height(rows, seqno);
-            self.alternate.resize_height(rows, seqno);
+            self.primary
+                .resize_height(rows, cols, self.scrollback_limit, seqno);
+            self.alternate.resize_height(rows, cols, 0, seqno);
         }
 
         self.rows = rows;
@@ -1150,6 +1390,7 @@ impl TerminalState {
             buffer.cursor.row = buffer.cursor.row.saturating_add(1);
         }
         buffer.pending_wrap = false;
+        buffer.current_input_start = Some(buffer.row(buffer.current_absolute_row()).id);
     }
 
     pub fn carriage_return(&mut self) {
@@ -1219,17 +1460,19 @@ impl TerminalState {
 
     pub fn reset(&mut self) {
         let seqno = self.bump_seqno();
-        self.primary.reset(self.rows, seqno);
-        self.alternate.reset(self.rows, seqno);
+        self.primary.reset(self.rows, self.cols, seqno);
+        self.alternate.reset(self.rows, self.cols, seqno);
         self.modes = TerminalModes::default();
         self.tab_stops = default_tab_stops(self.cols);
     }
 
     pub fn reverse_index(&mut self) {
         let seqno = self.bump_seqno();
+        let cols = self.cols;
+        let scrollback_limit = self.active_scrollback_limit();
         let buffer = self.active_buffer_mut();
         if buffer.cursor.row == buffer.scroll_top {
-            buffer.scroll_down_region(1, seqno);
+            buffer.scroll_down_region(cols, 1, scrollback_limit, seqno);
         } else {
             buffer.cursor.row = buffer.cursor.row.saturating_sub(1);
         }
@@ -1332,6 +1575,18 @@ impl TerminalState {
             }
             _ => {
                 let absolute = buffer.current_absolute_row();
+                if buffer.cursor.col == 0 {
+                    let mut clear_start = buffer.current_input_absolute_index().unwrap_or(absolute);
+                    if clear_start > absolute {
+                        clear_start = absolute;
+                    }
+                    while clear_start > 0 && buffer.row(clear_start - 1).wrapped {
+                        clear_start -= 1;
+                    }
+                    for row_abs in clear_start..absolute {
+                        buffer.clear_row_range(row_abs, 0, cols, cols, seqno);
+                    }
+                }
                 buffer.clear_row_range(absolute, buffer.cursor.col as usize, cols, cols, seqno);
                 for row in (buffer.cursor.row + 1)..rows {
                     let absolute = buffer.absolute_screen_row(row);
@@ -1398,8 +1653,11 @@ impl TerminalState {
     }
 
     pub fn scroll_down(&mut self, count: u16) {
+        let cols = self.cols;
+        let scrollback_limit = self.active_scrollback_limit();
         let seqno = self.bump_seqno();
-        self.active_buffer_mut().scroll_down_region(count, seqno);
+        self.active_buffer_mut()
+            .scroll_down_region(cols, count, scrollback_limit, seqno);
     }
 
     pub fn set_scroll_region(&mut self, top: u16, bottom: u16) {
@@ -1542,7 +1800,7 @@ impl TerminalState {
                 self.primary.save_cursor();
             }
             let seqno = self.bump_seqno();
-            self.alternate.reset(self.rows, seqno);
+            self.alternate.reset(self.rows, self.cols, seqno);
             self.modes.alternate_screen = true;
         } else {
             if !self.modes.alternate_screen {
@@ -1574,7 +1832,7 @@ pub fn cell_colors(cell: Option<&TerminalCell>) -> CellColors {
 }
 
 fn expanded_row_cells(row: &Row, width: usize) -> Vec<TerminalCell> {
-    let mut cells = row.cells.clone();
+    let mut cells = row.cells.to_vec();
     cells.resize(width, TerminalCell::blank());
     cells
 }
@@ -1585,8 +1843,8 @@ fn finalize_row_cells(
     width: usize,
 ) -> Vec<TerminalCell> {
     normalize_cells(&mut cells, width);
-    trim_trailing_blank_cells(&mut cells);
     let _ = wrapped;
+    cells.resize(width, TerminalCell::blank());
     cells
 }
 
@@ -1697,10 +1955,11 @@ fn map_logical_col_to_rows(
     (last_row, last_col)
 }
 
-fn trim_trailing_blank_cells(cells: &mut Vec<TerminalCell>) {
-    while cells.last().is_some_and(TerminalCell::is_blank) {
-        cells.pop();
-    }
+fn row_occupied_columns(cells: &[TerminalCell]) -> usize {
+    cells
+        .iter()
+        .rposition(|cell| !cell.is_blank())
+        .map_or(0, |index| index + 1)
 }
 
 fn reflow_break(cells: &[TerminalCell], start: usize, width: usize) -> usize {
@@ -1913,6 +2172,26 @@ mod tests {
         let text = terminal.contents_between_stable(0, 0, 3, 8);
         assert!(text.contains("one"));
         assert!(text.contains("three"));
+    }
+
+    #[test]
+    fn alternate_screen_resize_does_not_rewrap_like_primary() {
+        let mut terminal = TerminalState::new(2, 6, 32);
+        terminal.set_private_mode(1049, true);
+        for ch in "abcdef".chars() {
+            terminal.print(ch);
+        }
+
+        terminal.resize(2, 3);
+
+        assert_eq!(
+            terminal.visible_row(0).expect("row").text_range(0, 3),
+            "abc"
+        );
+        assert_eq!(
+            terminal.visible_row(1).expect("row").text_range(0, 3),
+            "   "
+        );
     }
 
     #[test]
