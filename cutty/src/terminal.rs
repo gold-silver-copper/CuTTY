@@ -319,18 +319,13 @@ struct PhysicalPosition {
     col: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MouseTrackingMode {
+    #[default]
     Disabled,
     Normal,
     ButtonMotion,
     AnyMotion,
-}
-
-impl Default for MouseTrackingMode {
-    fn default() -> Self {
-        Self::Disabled
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -885,20 +880,8 @@ impl TerminalState {
         (cursor.row, cursor.col)
     }
 
-    pub fn cursor_stable_position(&self) -> (StableRowIndex, u16) {
-        let cursor = self.active_buffer().cursor;
-        (
-            self.active_buffer().visible_row_to_stable_row(cursor.row),
-            cursor.col,
-        )
-    }
-
     pub fn viewport_top(&self) -> StableRowIndex {
         self.active_buffer().viewport_top()
-    }
-
-    pub fn set_viewport_top(&mut self, viewport_top: Option<StableRowIndex>) -> bool {
-        self.active_buffer_mut().set_viewport_top(viewport_top)
     }
 
     pub fn follow_viewport_bottom(&mut self) -> bool {
@@ -1010,36 +993,17 @@ impl TerminalState {
         end_row: u16,
         end_col: u16,
     ) -> String {
-        match start_row.cmp(&end_row) {
-            std::cmp::Ordering::Less => {
-                let mut contents = String::new();
-                for row in start_row..=end_row.min(self.rows.saturating_sub(1)) {
-                    let Some(buffer_row) = self.visible_row(row) else {
-                        continue;
-                    };
-                    if row == start_row {
-                        contents
-                            .push_str(&buffer_row.text_range(start_col.min(self.cols), self.cols));
-                        if !buffer_row.wrapped() {
-                            contents.push('\n');
-                        }
-                    } else if row == end_row {
-                        contents.push_str(&buffer_row.text_range(0, end_col.min(self.cols)));
-                    } else {
-                        contents.push_str(&buffer_row.text_range(0, self.cols));
-                        if !buffer_row.wrapped() {
-                            contents.push('\n');
-                        }
-                    }
-                }
-                contents
-            }
-            std::cmp::Ordering::Equal => self
-                .visible_row(start_row)
-                .map(|row| row.text_range(start_col.min(self.cols), end_col.min(self.cols)))
-                .unwrap_or_default(),
-            std::cmp::Ordering::Greater => String::new(),
+        if self.rows == 0 {
+            return String::new();
         }
+
+        let max_row = self.rows.saturating_sub(1);
+        self.contents_between_stable(
+            self.visible_row_to_stable_row(start_row.min(max_row)),
+            start_col,
+            self.visible_row_to_stable_row(end_row.min(max_row)),
+            end_col,
+        )
     }
 
     pub fn contents_between_stable(
@@ -1079,25 +1043,6 @@ impl TerminalState {
                 .unwrap_or_default(),
             std::cmp::Ordering::Greater => String::new(),
         }
-    }
-
-    pub fn dirty_rows(&self, prev: Option<&Self>) -> Vec<usize> {
-        let Some(prev) = prev else {
-            return (0..self.rows as usize).collect();
-        };
-
-        if prev.size() != self.size() || prev.modes.alternate_screen != self.modes.alternate_screen
-        {
-            return (0..self.rows as usize).collect();
-        }
-
-        let mut dirty = Vec::new();
-        for row in 0..self.rows {
-            if self.visible_line_info(row) != prev.visible_line_info(row) {
-                dirty.push(row as usize);
-            }
-        }
-        dirty
     }
 
     pub fn print(&mut self, c: char) {
@@ -1713,14 +1658,14 @@ fn indexed_color(index: u8) -> Rgb {
 
 fn default_tab_stops(cols: u16) -> Vec<bool> {
     let mut tab_stops = vec![false; cols as usize];
-    for col in 0..cols as usize {
-        tab_stops[col] = is_default_tab_stop(col);
+    for (col, tab_stop) in tab_stops.iter_mut().enumerate() {
+        *tab_stop = is_default_tab_stop(col);
     }
     tab_stops
 }
 
 fn is_default_tab_stop(col: usize) -> bool {
-    col != 0 && col % 8 == 0
+    col != 0 && col.is_multiple_of(8)
 }
 
 #[cfg(test)]

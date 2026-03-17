@@ -58,14 +58,6 @@ impl SelectionState {
         self.selecting = false;
     }
 
-    pub fn anchor(&self) -> Option<StableCellPos> {
-        self.anchor
-    }
-
-    pub fn focus(&self) -> Option<StableCellPos> {
-        self.focus
-    }
-
     pub fn set_range(&mut self, anchor: StableCellPos, focus: StableCellPos) -> bool {
         let changed = self.anchor != Some(anchor) || self.focus != Some(focus) || self.selecting;
         self.anchor = Some(anchor);

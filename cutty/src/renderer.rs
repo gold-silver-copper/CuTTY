@@ -169,9 +169,7 @@ impl GpuWindow {
 
         Ok(())
     }
-}
 
-impl GpuWindow {
     fn clamp_render_size(&self, size: PhysicalSize<u32>) -> PhysicalSize<u32> {
         clamp_render_size(size, self.max_surface_dimension)
     }
@@ -282,20 +280,6 @@ fn paint_terminal(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::clamp_render_size;
-    use winit::dpi::PhysicalSize;
-
-    #[test]
-    fn render_size_is_clamped_to_gpu_limits() {
-        assert_eq!(
-            clamp_render_size(PhysicalSize::new(9000, 7000), 8192),
-            PhysicalSize::new(8192, 7000)
-        );
-    }
-}
-
 fn paint_selection(
     scene: &mut Scene,
     terminal: &TerminalState,
@@ -381,4 +365,18 @@ fn color_with_alpha(color: crate::terminal::Rgb, alpha: f32) -> Color {
     let mut rgba = color_from_rgb(color).to_rgba8();
     rgba.a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
     Color::from_rgba8(rgba.r, rgba.g, rgba.b, rgba.a)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_render_size;
+    use winit::dpi::PhysicalSize;
+
+    #[test]
+    fn render_size_is_clamped_to_gpu_limits() {
+        assert_eq!(
+            clamp_render_size(PhysicalSize::new(9000, 7000), 8192),
+            PhysicalSize::new(8192, 7000)
+        );
+    }
 }

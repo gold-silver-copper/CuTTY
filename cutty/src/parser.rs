@@ -10,17 +10,12 @@ use crate::terminal::{TerminalColor, TerminalState};
 #[derive(Debug, Default)]
 pub struct ParserCallbacks {
     responses: Vec<Vec<u8>>,
-    pending_resize: Option<(u16, u16)>,
     pending_title: Option<String>,
 }
 
 impl ParserCallbacks {
     pub fn take_responses(&mut self) -> Vec<Vec<u8>> {
         mem::take(&mut self.responses)
-    }
-
-    pub fn take_resize_request(&mut self) -> Option<(u16, u16)> {
-        self.pending_resize.take()
     }
 
     pub fn take_title(&mut self) -> Option<String> {
@@ -69,10 +64,6 @@ impl AnsiParser {
 
     pub fn take_responses(&mut self) -> Vec<Vec<u8>> {
         self.callbacks.take_responses()
-    }
-
-    pub fn take_resize_request(&mut self) -> Option<(u16, u16)> {
-        self.callbacks.take_resize_request()
     }
 
     pub fn take_title(&mut self) -> Option<String> {

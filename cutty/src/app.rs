@@ -5,7 +5,7 @@ use arboard::Clipboard;
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
-    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     keyboard::{Key, ModifiersState, NamedKey},
     window::WindowId,
@@ -20,7 +20,7 @@ use crate::{
     renderer::GpuWindow,
     selection::{CellPos, SelectionState, StableCellPos, cell_at_position},
     terminal::{MouseTrackingMode, TerminalState},
-    text::{PADDING_X, PADDING_Y, TextSystem},
+    text::{TextSystem, grid_pixel_size},
 };
 
 const FONT_SIZE_STEP: f32 = 1.0;
@@ -193,11 +193,9 @@ impl AppState {
         }
 
         if resize_window {
-            let size = self.window.request_inner_size(window_size_for_grid(
-                cols,
-                rows,
-                self.text.metrics(),
-            ));
+            let size =
+                self.window
+                    .request_inner_size(grid_pixel_size(cols, rows, self.text.metrics()));
             self.resize_controller
                 .request_grid_preserving_resize(cols, rows, size);
         }
@@ -222,14 +220,12 @@ impl AppState {
             return;
         };
 
-        self.prepare_for_terminal_input();
         let bytes = if self.terminal.bracketed_paste() {
             bracketed_paste_bytes(&text)
         } else {
             text.into_bytes()
         };
-        self.pty.write_all(&bytes);
-        self.window.request_redraw();
+        self.send_terminal_input(&bytes);
     }
 
     fn adjust_font_size(&mut self, delta: f32) {
@@ -259,6 +255,12 @@ impl AppState {
         if self.terminal.follow_viewport_bottom() {
             self.window.request_redraw();
         }
+    }
+
+    fn send_terminal_input(&mut self, bytes: &[u8]) {
+        self.prepare_for_terminal_input();
+        self.pty.write_all(bytes);
+        self.window.request_redraw();
     }
 
     fn scroll_viewport_lines(&mut self, lines: i32) {
@@ -402,16 +404,16 @@ impl AppState {
             self.pressed_mouse_buttons.insert(button);
         }
 
-        if let Some(cell) = self.mouse_cell_for_report(button_state == ElementState::Released) {
-            if let Some(bytes) = mouse_button_bytes(
+        if let Some(cell) = self.mouse_cell_for_report(button_state == ElementState::Released)
+            && let Some(bytes) = mouse_button_bytes(
                 button,
                 button_state,
                 cell,
                 self.modifiers,
                 self.terminal.sgr_mouse(),
-            ) {
-                self.pty.write_all(&bytes);
-            }
+            )
+        {
+            self.pty.write_all(&bytes);
         }
 
         if button_state == ElementState::Released {
@@ -439,7 +441,6 @@ impl AppState {
 
         let responses = self.parser.take_responses();
         let title = self.parser.take_title();
-        let resize_request = self.parser.take_resize_request();
 
         for response in responses {
             self.pty.write_all(&response);
@@ -453,13 +454,46 @@ impl AppState {
             }
         }
 
-        if let Some((rows, cols)) = resize_request {
-            self.apply_terminal_size(cols.max(1), rows.max(1), true);
-            changed = true;
-        }
-
         if changed {
             self.window.request_redraw();
+        }
+    }
+
+    fn handle_pressed_key(&mut self, event: &KeyEvent) {
+        if let Some(selection_move) = selection_move_for_key(&event.logical_key, self.modifiers) {
+            self.apply_keyboard_selection(selection_move);
+            return;
+        }
+
+        if let Some(page_direction) = viewport_scroll_shortcut(&event.logical_key, self.modifiers) {
+            self.scroll_viewport_page(page_direction);
+            return;
+        }
+
+        if is_copy_shortcut(&event.logical_key, self.modifiers) {
+            self.copy_selection();
+            return;
+        }
+
+        if is_paste_shortcut(&event.logical_key, self.modifiers) {
+            self.paste_clipboard();
+            return;
+        }
+
+        if is_font_increase_shortcut(&event.logical_key, self.modifiers) {
+            self.adjust_font_size(FONT_SIZE_STEP);
+            return;
+        }
+
+        if is_font_decrease_shortcut(&event.logical_key, self.modifiers) {
+            self.adjust_font_size(-FONT_SIZE_STEP);
+            return;
+        }
+
+        if let Some(bytes) =
+            bytes_for_key_event(event, self.modifiers, self.terminal.application_cursor())
+        {
+            self.send_terminal_input(&bytes);
         }
     }
 }
@@ -587,58 +621,8 @@ impl ApplicationHandler<UserEvent> for App {
                     state.handle_local_mouse_wheel(delta);
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed {
-                    if let Some(selection_move) =
-                        selection_move_for_key(&event.logical_key, state.modifiers)
-                    {
-                        state.apply_keyboard_selection(selection_move);
-                        return;
-                    }
-
-                    if let Some(page_direction) =
-                        viewport_scroll_shortcut(&event.logical_key, state.modifiers)
-                    {
-                        state.scroll_viewport_page(page_direction);
-                        return;
-                    }
-
-                    let is_copy = is_copy_shortcut(&event.logical_key, state.modifiers);
-                    let is_paste = is_paste_shortcut(&event.logical_key, state.modifiers);
-                    let is_font_increase =
-                        is_font_increase_shortcut(&event.logical_key, state.modifiers);
-                    let is_font_decrease =
-                        is_font_decrease_shortcut(&event.logical_key, state.modifiers);
-
-                    if is_copy {
-                        state.copy_selection();
-                        return;
-                    }
-
-                    if is_paste {
-                        state.paste_clipboard();
-                        return;
-                    }
-
-                    if is_font_increase {
-                        state.adjust_font_size(FONT_SIZE_STEP);
-                        return;
-                    }
-
-                    if is_font_decrease {
-                        state.adjust_font_size(-FONT_SIZE_STEP);
-                        return;
-                    }
-
-                    if let Some(bytes) = bytes_for_key_event(
-                        &event,
-                        state.modifiers,
-                        state.terminal.application_cursor(),
-                    ) {
-                        state.prepare_for_terminal_input();
-                        state.pty.write_all(&bytes);
-                    }
-                }
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                state.handle_pressed_key(&event);
             }
             WindowEvent::RedrawRequested => {
                 state.drain_pty();
@@ -986,16 +970,6 @@ fn stable_cell_pos_from_linear(terminal: &TerminalState, index: usize, cols: u16
     }
 }
 
-fn window_size_for_grid(
-    cols: u16,
-    rows: u16,
-    metrics: crate::text::CellMetrics,
-) -> PhysicalSize<u32> {
-    let width = (cols as f32 * metrics.width + PADDING_X * 2.0).ceil() as u32;
-    let height = (rows as f32 * metrics.height + PADDING_Y * 2.0).ceil() as u32;
-    PhysicalSize::new(width, height)
-}
-
 fn viewport_scroll_lines_from_delta(delta: MouseScrollDelta, row_height: f32) -> f64 {
     match delta {
         MouseScrollDelta::LineDelta(_, y) => y as f64,
@@ -1026,10 +1000,12 @@ mod tests {
         is_font_decrease_shortcut, is_font_increase_shortcut, mouse_button_bytes,
         mouse_motion_bytes, move_selection_focus, selection_move_for_key, uses_command_shortcuts,
         viewport_scroll_lines_from_delta, viewport_scroll_shortcut, wheel_codes_from_delta,
-        window_size_for_grid,
     };
     use crate::{
-        config::FontConfig, selection::CellPos, terminal::TerminalState, text::TextSystem,
+        config::FontConfig,
+        selection::CellPos,
+        terminal::TerminalState,
+        text::{TextSystem, grid_pixel_size},
     };
     use winit::{
         dpi::PhysicalSize,
@@ -1074,7 +1050,7 @@ mod tests {
     fn window_size_for_grid_round_trips_through_visible_grid() {
         let font = FontConfig::default();
         let text = TextSystem::new(24, &font);
-        let size = window_size_for_grid(80, 24, text.metrics());
+        let size = grid_pixel_size(80, 24, text.metrics());
 
         assert_eq!(text.visible_grid(size), (80, 24));
     }
@@ -1083,7 +1059,7 @@ mod tests {
     fn programmatic_resize_suppresses_matching_window_resize_events() {
         let font = FontConfig::default();
         let text = TextSystem::new(24, &font);
-        let size = window_size_for_grid(80, 24, text.metrics());
+        let size = grid_pixel_size(80, 24, text.metrics());
         let mut controller = ResizeController::default();
 
         controller.request_grid_preserving_resize(80, 24, size);
@@ -1099,7 +1075,7 @@ mod tests {
     fn programmatic_resize_retries_when_window_is_still_too_small_for_target_grid() {
         let font = FontConfig::default();
         let text = TextSystem::new(24, &font);
-        let requested_size = window_size_for_grid(80, 24, text.metrics());
+        let requested_size = grid_pixel_size(80, 24, text.metrics());
         let actual_size = PhysicalSize::new(requested_size.width, requested_size.height - 1);
         let mut controller = ResizeController::default();
 
@@ -1117,7 +1093,7 @@ mod tests {
     fn programmatic_resize_times_out_if_window_never_reaches_requested_size() {
         let font = FontConfig::default();
         let text = TextSystem::new(24, &font);
-        let requested_size = window_size_for_grid(80, 24, text.metrics());
+        let requested_size = grid_pixel_size(80, 24, text.metrics());
         let actual_size = PhysicalSize::new(requested_size.width, requested_size.height - 1);
         let fallback_grid = text.visible_grid(actual_size);
         let mut controller = ResizeController::default();

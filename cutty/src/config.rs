@@ -124,10 +124,10 @@ impl Default for TerminalConfig {
 
 impl TerminalConfig {
     pub fn validate(&self) -> Result<()> {
-        if let Some(shell) = &self.shell {
-            if shell.trim().is_empty() {
-                bail!("terminal.shell cannot be empty");
-            }
+        if let Some(shell) = &self.shell
+            && shell.trim().is_empty()
+        {
+            bail!("terminal.shell cannot be empty");
         }
         Ok(())
     }

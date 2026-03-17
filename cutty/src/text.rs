@@ -257,7 +257,7 @@ impl TextSystem {
     }
 }
 
-fn grid_pixel_size(cols: u16, rows: u16, metrics: CellMetrics) -> PhysicalSize<u32> {
+pub(crate) fn grid_pixel_size(cols: u16, rows: u16, metrics: CellMetrics) -> PhysicalSize<u32> {
     let width = (cols as f32 * metrics.width + PADDING_X * 2.0).ceil() as u32;
     let height = (rows as f32 * metrics.height + PADDING_Y * 2.0).ceil() as u32;
     PhysicalSize::new(width, height)
