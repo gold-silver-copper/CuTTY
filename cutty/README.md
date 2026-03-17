@@ -1,6 +1,6 @@
 # cutty
 
-Core library crate for CuTTY, a wgpu-powered terminal emulator.
+A wgpu-powered terminal emulator for CuTTY.
 
-This crate is in an early stage and is being prepared for publication to
-[crates.io](https://crates.io/).
+This crate contains the desktop application entrypoint and rendering/runtime
+code.

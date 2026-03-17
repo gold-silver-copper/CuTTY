@@ -2,10 +2,19 @@
 name = "cutty"
 version = "0.1.0"
 edition = "2024"
-description = "Core library crate for CuTTY, a wgpu-powered terminal emulator."
+description = "A wgpu-powered terminal emulator for CuTTY."
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/gold-silver-copper/CuTTY"
 homepage = "https://github.com/gold-silver-copper/CuTTY"
 
 [dependencies]
+arboard = "3.6"
+anyhow = "1.0"
+parley = { path = "../parley-main/parley" }
+pollster = "0.4"
+portable-pty = "0.9"
+unicode-width = "0.2"
+vello = { path = "../vello-main/vello" }
+vte = "0.15"
+winit = "0.30.12"
