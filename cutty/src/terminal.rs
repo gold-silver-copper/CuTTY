@@ -253,9 +253,11 @@ pub struct TerminalState {
     scroll_top: u16,
     scroll_bottom: u16,
     application_cursor: bool,
+    application_keypad: bool,
     hide_cursor: bool,
     wraparound: bool,
     pending_wrap: bool,
+    tab_stops: Vec<bool>,
 }
 
 impl TerminalState {
@@ -272,9 +274,11 @@ impl TerminalState {
             scroll_top: 0,
             scroll_bottom: rows.saturating_sub(1),
             application_cursor: false,
+            application_keypad: false,
             hide_cursor: false,
             wraparound: true,
             pending_wrap: false,
+            tab_stops: default_tab_stops(cols),
         };
         state.ensure_screen_rows();
         state
@@ -294,6 +298,10 @@ impl TerminalState {
 
     pub fn application_cursor(&self) -> bool {
         self.application_cursor
+    }
+
+    pub fn application_keypad(&self) -> bool {
+        self.application_keypad
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
@@ -338,6 +346,7 @@ impl TerminalState {
 
         self.rows = rows;
         self.cols = cols;
+        self.resize_tab_stops(cols);
         self.scroll_top = 0;
         self.scroll_bottom = rows.saturating_sub(1);
         self.cursor.row = self.cursor.row.min(rows.saturating_sub(1));
@@ -477,8 +486,56 @@ impl TerminalState {
 
     pub fn tab(&mut self) {
         self.pending_wrap = false;
-        let next = ((self.cursor.col / 8) + 1) * 8;
-        self.cursor.col = next.min(self.cols.saturating_sub(1));
+        if self.cols == 0 {
+            return;
+        }
+
+        self.cursor.col = self
+            .next_tab_stop(self.cursor.col as usize)
+            .unwrap_or(self.cols.saturating_sub(1) as usize) as u16;
+    }
+
+    pub fn move_forward_tabs(&mut self, count: u16) {
+        for _ in 0..count.max(1) {
+            self.tab();
+        }
+    }
+
+    pub fn move_backward_tabs(&mut self, count: u16) {
+        self.pending_wrap = false;
+        if self.cols == 0 {
+            return;
+        }
+
+        for _ in 0..count.max(1) {
+            self.cursor.col = self
+                .previous_tab_stop(self.cursor.col as usize)
+                .unwrap_or(0) as u16;
+        }
+    }
+
+    pub fn set_horizontal_tabstop(&mut self) {
+        if let Some(tab_stop) = self.tab_stops.get_mut(self.cursor.col as usize) {
+            *tab_stop = true;
+        }
+    }
+
+    pub fn clear_current_tab_stop(&mut self) {
+        if let Some(tab_stop) = self.tab_stops.get_mut(self.cursor.col as usize) {
+            *tab_stop = false;
+        }
+    }
+
+    pub fn clear_all_tab_stops(&mut self) {
+        self.tab_stops.fill(false);
+    }
+
+    pub fn set_default_tab_stops(&mut self, interval: u16) {
+        self.tab_stops.fill(false);
+        let interval = interval.max(1) as usize;
+        for col in (interval..self.cols as usize).step_by(interval) {
+            self.tab_stops[col] = true;
+        }
     }
 
     pub fn reset(&mut self) {
@@ -490,9 +547,11 @@ impl TerminalState {
         self.scroll_top = 0;
         self.scroll_bottom = self.rows.saturating_sub(1);
         self.application_cursor = false;
+        self.application_keypad = false;
         self.hide_cursor = false;
         self.wraparound = true;
         self.pending_wrap = false;
+        self.tab_stops = default_tab_stops(self.cols);
     }
 
     pub fn reverse_index(&mut self) {
@@ -569,6 +628,7 @@ impl TerminalState {
     pub fn erase_in_display(&mut self, mode: u16) {
         self.pending_wrap = false;
         match mode {
+            3 => self.scrollback.clear(),
             1 => {
                 for row in 0..self.cursor.row {
                     self.row_mut(row).clear();
@@ -693,6 +753,10 @@ impl TerminalState {
         }
     }
 
+    pub fn set_keypad_application_mode(&mut self, enabled: bool) {
+        self.application_keypad = enabled;
+    }
+
     pub fn set_attr_reset(&mut self) {
         self.attrs = CellAttributes::default();
     }
@@ -753,6 +817,31 @@ impl TerminalState {
         let cols = self.cols;
         self.row_mut(row).truncate_visible(cols);
         self.row_mut(row).wrapped = false;
+    }
+
+    fn resize_tab_stops(&mut self, cols: u16) {
+        let old_len = self.tab_stops.len();
+        self.tab_stops.resize(cols as usize, false);
+        for col in old_len..cols as usize {
+            self.tab_stops[col] = is_default_tab_stop(col);
+        }
+    }
+
+    fn next_tab_stop(&self, start: usize) -> Option<usize> {
+        self.tab_stops
+            .iter()
+            .enumerate()
+            .skip(start.saturating_add(1))
+            .find_map(|(col, stop)| stop.then_some(col))
+    }
+
+    fn previous_tab_stop(&self, start: usize) -> Option<usize> {
+        self.tab_stops
+            .iter()
+            .take(start)
+            .enumerate()
+            .rev()
+            .find_map(|(col, stop)| stop.then_some(col))
     }
 
     fn row_mut(&mut self, row: u16) -> &mut BufferRow {
@@ -874,6 +963,18 @@ fn indexed_color(index: u8) -> Rgb {
             Rgb::new(gray, gray, gray)
         }
     }
+}
+
+fn default_tab_stops(cols: u16) -> Vec<bool> {
+    let mut tab_stops = vec![false; cols as usize];
+    for col in 0..cols as usize {
+        tab_stops[col] = is_default_tab_stop(col);
+    }
+    tab_stops
+}
+
+fn is_default_tab_stop(col: usize) -> bool {
+    col != 0 && col % 8 == 0
 }
 
 #[cfg(test)]

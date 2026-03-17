@@ -1,6 +1,9 @@
 use std::mem;
 
-use vte::{Params, Perform};
+use vte::ansi::{
+    self, Attr, CharsetIndex, ClearMode, Color, Handler, LineClearMode, NamedColor, PrivateMode,
+    StandardCharset, TabulationClearMode,
+};
 
 use crate::terminal::{TerminalColor, TerminalState};
 
@@ -25,10 +28,26 @@ impl ParserCallbacks {
     }
 }
 
-#[derive(Default)]
 pub struct AnsiParser {
-    parser: vte::Parser,
+    parser: ansi::Processor,
     callbacks: ParserCallbacks,
+    active_charset: CharsetIndex,
+    charsets: [StandardCharset; 4],
+    current_title: String,
+    title_stack: Vec<String>,
+}
+
+impl Default for AnsiParser {
+    fn default() -> Self {
+        Self {
+            parser: ansi::Processor::new(),
+            callbacks: ParserCallbacks::default(),
+            active_charset: CharsetIndex::G0,
+            charsets: [StandardCharset::Ascii; 4],
+            current_title: String::new(),
+            title_stack: Vec::new(),
+        }
+    }
 }
 
 impl AnsiParser {
@@ -37,11 +56,15 @@ impl AnsiParser {
     }
 
     pub fn process(&mut self, terminal: &mut TerminalState, bytes: &[u8]) {
-        let mut performer = TerminalPerformer {
+        let mut handler = TerminalHandler {
             terminal,
             callbacks: &mut self.callbacks,
+            active_charset: &mut self.active_charset,
+            charsets: &mut self.charsets,
+            current_title: &mut self.current_title,
+            title_stack: &mut self.title_stack,
         };
-        self.parser.advance(&mut performer, bytes);
+        self.parser.advance(&mut handler, bytes);
     }
 
     pub fn take_responses(&mut self) -> Vec<Vec<u8>> {
@@ -57,179 +80,57 @@ impl AnsiParser {
     }
 }
 
-struct TerminalPerformer<'a> {
+struct TerminalHandler<'a> {
     terminal: &'a mut TerminalState,
     callbacks: &'a mut ParserCallbacks,
+    active_charset: &'a mut CharsetIndex,
+    charsets: &'a mut [StandardCharset; 4],
+    current_title: &'a mut String,
+    title_stack: &'a mut Vec<String>,
 }
 
-impl Perform for TerminalPerformer<'_> {
-    fn print(&mut self, c: char) {
-        self.terminal.print(c);
-    }
-
-    fn execute(&mut self, byte: u8) {
-        match byte {
-            8 => self.terminal.backspace(),
-            9 => self.terminal.tab(),
-            10..=12 => self.terminal.linefeed(),
-            13 => self.terminal.carriage_return(),
-            _ => {}
-        }
-    }
-
-    fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
-        match params {
-            [b"0", title] | [b"2", title] => {
-                self.callbacks.pending_title = Some(String::from_utf8_lossy(title).into_owned());
-            }
-            _ => {}
-        }
-    }
-
-    fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
-        if ignore {
+impl Handler for TerminalHandler<'_> {
+    fn set_title(&mut self, title: Option<String>) {
+        let Some(title) = title else {
             return;
-        }
-
-        match intermediates.first().copied() {
-            None => self.dispatch_standard_csi(params, action),
-            Some(b'?') => self.dispatch_private_csi(params, action),
-            _ => {}
-        }
-    }
-
-    fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
-        if ignore || !intermediates.is_empty() {
-            return;
-        }
-
-        match byte {
-            b'7' => self.terminal.save_cursor(),
-            b'8' => self.terminal.restore_cursor(),
-            b'D' => self.terminal.linefeed(),
-            b'E' => {
-                self.terminal.carriage_return();
-                self.terminal.linefeed();
-            }
-            b'M' => self.terminal.reverse_index(),
-            b'c' => self.terminal.reset(),
-            _ => {}
-        }
-    }
-}
-
-impl TerminalPerformer<'_> {
-    fn dispatch_standard_csi(&mut self, params: &Params, action: char) {
-        match action {
-            '@' => self.terminal.insert_blank_chars(first_param(params, 1)),
-            'A' => self.terminal.cursor_up(first_param(params, 1)),
-            'B' => self.terminal.cursor_down(first_param(params, 1)),
-            'C' => self.terminal.cursor_forward(first_param(params, 1)),
-            'D' => self.terminal.cursor_back(first_param(params, 1)),
-            'E' => self.terminal.cursor_next_line(first_param(params, 1)),
-            'F' => self.terminal.cursor_prev_line(first_param(params, 1)),
-            'G' => self
-                .terminal
-                .set_cursor_col(first_param(params, 1).saturating_sub(1)),
-            'H' | 'f' => {
-                let (row, col) = two_params(params, 1, 1);
-                self.terminal
-                    .set_cursor_position(row.saturating_sub(1), col.saturating_sub(1));
-            }
-            'J' => self
-                .terminal
-                .erase_in_display(first_param_allow_zero(params, 0)),
-            'K' => self
-                .terminal
-                .erase_in_line(first_param_allow_zero(params, 0)),
-            'L' => self.terminal.insert_lines(first_param(params, 1)),
-            'M' => self.terminal.delete_lines(first_param(params, 1)),
-            'P' => self.terminal.delete_chars(first_param(params, 1)),
-            'S' => self.terminal.scroll_up(first_param(params, 1)),
-            'T' => self.terminal.scroll_down(first_param(params, 1)),
-            'X' => self.terminal.erase_chars(first_param(params, 1)),
-            'd' => self
-                .terminal
-                .set_cursor_row(first_param(params, 1).saturating_sub(1)),
-            'm' => self.apply_sgr(params),
-            'n' => self.device_status_report(params),
-            'r' => {
-                let (top, bottom) = two_params(params, 1, self.terminal.size().0.max(1));
-                self.terminal
-                    .set_scroll_region(top.saturating_sub(1), bottom.saturating_sub(1));
-            }
-            't' => self.handle_window_op(params),
-            _ => {}
-        }
-    }
-
-    fn dispatch_private_csi(&mut self, params: &Params, action: char) {
-        let enabled = match action {
-            'h' => true,
-            'l' => false,
-            _ => return,
         };
 
-        for mode in params.iter().flatten().copied() {
-            self.terminal.set_private_mode(mode, enabled);
-        }
+        *self.current_title = title.clone();
+        self.callbacks.pending_title = Some(title);
     }
 
-    fn apply_sgr(&mut self, params: &Params) {
-        let mut values = params_to_values(params);
-        if values.is_empty() {
-            values.push(0);
-        }
-
-        let mut index = 0;
-        while index < values.len() {
-            match values[index] {
-                0 => self.terminal.set_attr_reset(),
-                1 => self.terminal.set_bold(true),
-                2 => self.terminal.set_dim(true),
-                3 => self.terminal.set_italic(true),
-                4 => self.terminal.set_underline(true),
-                7 => self.terminal.set_inverse(true),
-                22 => {
-                    self.terminal.set_bold(false);
-                    self.terminal.set_dim(false);
-                }
-                23 => self.terminal.set_italic(false),
-                24 => self.terminal.set_underline(false),
-                27 => self.terminal.set_inverse(false),
-                30..=37 => self
-                    .terminal
-                    .set_fg(TerminalColor::Indexed((values[index] - 30) as u8)),
-                39 => self.terminal.set_fg(TerminalColor::Default),
-                40..=47 => self
-                    .terminal
-                    .set_bg(TerminalColor::Indexed((values[index] - 40) as u8)),
-                49 => self.terminal.set_bg(TerminalColor::Default),
-                90..=97 => self
-                    .terminal
-                    .set_fg(TerminalColor::Indexed((values[index] - 90 + 8) as u8)),
-                100..=107 => self
-                    .terminal
-                    .set_bg(TerminalColor::Indexed((values[index] - 100 + 8) as u8)),
-                38 | 48 => {
-                    let is_fg = values[index] == 38;
-                    if let Some((color, consumed)) = parse_extended_color(&values[index + 1..]) {
-                        if is_fg {
-                            self.terminal.set_fg(color);
-                        } else {
-                            self.terminal.set_bg(color);
-                        }
-                        index += consumed;
-                    }
-                }
-                _ => {}
-            }
-            index += 1;
-        }
+    fn input(&mut self, c: char) {
+        let mapped = self.charsets[charset_slot(*self.active_charset)].map(c);
+        self.terminal.print(mapped);
     }
 
-    fn device_status_report(&mut self, params: &Params) {
-        match first_param_allow_zero(params, 0) {
+    fn goto(&mut self, line: i32, col: usize) {
+        self.terminal
+            .set_cursor_position(cursor_row(line), to_u16(col));
+    }
+
+    fn goto_line(&mut self, line: i32) {
+        self.terminal.set_cursor_row(cursor_row(line));
+    }
+
+    fn goto_col(&mut self, col: usize) {
+        self.terminal.set_cursor_col(to_u16(col));
+    }
+
+    fn insert_blank(&mut self, count: usize) {
+        self.terminal.insert_blank_chars(to_u16(count));
+    }
+
+    fn move_up(&mut self, rows: usize) {
+        self.terminal.cursor_up(to_u16(rows));
+    }
+
+    fn move_down(&mut self, rows: usize) {
+        self.terminal.cursor_down(to_u16(rows));
+    }
+
+    fn device_status(&mut self, status: usize) {
+        match status {
             5 => self.callbacks.responses.push(b"\x1b[0n".to_vec()),
             6 => {
                 let (row, col) = self.terminal.cursor_position();
@@ -241,72 +142,301 @@ impl TerminalPerformer<'_> {
         }
     }
 
-    fn handle_window_op(&mut self, params: &Params) {
-        let values = params_to_values(params);
-        if values.first().copied() != Some(8) {
-            return;
-        }
+    fn move_forward(&mut self, cols: usize) {
+        self.terminal.cursor_forward(to_u16(cols));
+    }
 
-        let (current_rows, current_cols) = self.terminal.size();
-        let rows = values.get(1).copied().unwrap_or(current_rows).max(1);
-        let cols = values.get(2).copied().unwrap_or(current_cols).max(1);
-        self.callbacks.pending_resize = Some((rows, cols));
+    fn move_backward(&mut self, cols: usize) {
+        self.terminal.cursor_back(to_u16(cols));
+    }
+
+    fn move_down_and_cr(&mut self, rows: usize) {
+        self.terminal.cursor_next_line(to_u16(rows));
+    }
+
+    fn move_up_and_cr(&mut self, rows: usize) {
+        self.terminal.cursor_prev_line(to_u16(rows));
+    }
+
+    fn put_tab(&mut self, count: u16) {
+        self.terminal.move_forward_tabs(count);
+    }
+
+    fn backspace(&mut self) {
+        self.terminal.backspace();
+    }
+
+    fn carriage_return(&mut self) {
+        self.terminal.carriage_return();
+    }
+
+    fn linefeed(&mut self) {
+        self.terminal.linefeed();
+    }
+
+    fn scroll_up(&mut self, rows: usize) {
+        self.terminal.scroll_up(to_u16(rows));
+    }
+
+    fn scroll_down(&mut self, rows: usize) {
+        self.terminal.scroll_down(to_u16(rows));
+    }
+
+    fn insert_blank_lines(&mut self, count: usize) {
+        self.terminal.insert_lines(to_u16(count));
+    }
+
+    fn delete_lines(&mut self, count: usize) {
+        self.terminal.delete_lines(to_u16(count));
+    }
+
+    fn erase_chars(&mut self, count: usize) {
+        self.terminal.erase_chars(to_u16(count));
+    }
+
+    fn delete_chars(&mut self, count: usize) {
+        self.terminal.delete_chars(to_u16(count));
+    }
+
+    fn move_backward_tabs(&mut self, count: u16) {
+        self.terminal.move_backward_tabs(count);
+    }
+
+    fn move_forward_tabs(&mut self, count: u16) {
+        self.terminal.move_forward_tabs(count);
+    }
+
+    fn save_cursor_position(&mut self) {
+        self.terminal.save_cursor();
+    }
+
+    fn restore_cursor_position(&mut self) {
+        self.terminal.restore_cursor();
+    }
+
+    fn clear_line(&mut self, mode: LineClearMode) {
+        let mode = match mode {
+            LineClearMode::Right => 0,
+            LineClearMode::Left => 1,
+            LineClearMode::All => 2,
+        };
+        self.terminal.erase_in_line(mode);
+    }
+
+    fn clear_screen(&mut self, mode: ClearMode) {
+        let mode = match mode {
+            ClearMode::Below => 0,
+            ClearMode::Above => 1,
+            ClearMode::All => 2,
+            ClearMode::Saved => 3,
+        };
+        self.terminal.erase_in_display(mode);
+    }
+
+    fn clear_tabs(&mut self, mode: TabulationClearMode) {
+        match mode {
+            TabulationClearMode::Current => self.terminal.clear_current_tab_stop(),
+            TabulationClearMode::All => self.terminal.clear_all_tab_stops(),
+        }
+    }
+
+    fn set_tabs(&mut self, interval: u16) {
+        self.terminal.set_default_tab_stops(interval);
+    }
+
+    fn reset_state(&mut self) {
+        self.terminal.reset();
+        *self.active_charset = CharsetIndex::G0;
+        *self.charsets = [StandardCharset::Ascii; 4];
+    }
+
+    fn reverse_index(&mut self) {
+        self.terminal.reverse_index();
+    }
+
+    fn terminal_attribute(&mut self, attr: Attr) {
+        match attr {
+            Attr::Reset => self.terminal.set_attr_reset(),
+            Attr::Bold => self.terminal.set_bold(true),
+            Attr::Dim => self.terminal.set_dim(true),
+            Attr::Italic => self.terminal.set_italic(true),
+            Attr::Underline
+            | Attr::DoubleUnderline
+            | Attr::Undercurl
+            | Attr::DottedUnderline
+            | Attr::DashedUnderline => self.terminal.set_underline(true),
+            Attr::Reverse => self.terminal.set_inverse(true),
+            Attr::CancelBold => self.terminal.set_bold(false),
+            Attr::CancelBoldDim => {
+                self.terminal.set_bold(false);
+                self.terminal.set_dim(false);
+            }
+            Attr::CancelItalic => self.terminal.set_italic(false),
+            Attr::CancelUnderline => self.terminal.set_underline(false),
+            Attr::CancelReverse => self.terminal.set_inverse(false),
+            Attr::Foreground(color) => self.terminal.set_fg(terminal_color(color)),
+            Attr::Background(color) => self.terminal.set_bg(terminal_color(color)),
+            _ => {}
+        }
+    }
+
+    fn set_private_mode(&mut self, mode: PrivateMode) {
+        self.terminal.set_private_mode(mode.raw(), true);
+    }
+
+    fn unset_private_mode(&mut self, mode: PrivateMode) {
+        self.terminal.set_private_mode(mode.raw(), false);
+    }
+
+    fn set_scrolling_region(&mut self, top: usize, bottom: Option<usize>) {
+        let (_, rows) = (self.terminal.size().1, self.terminal.size().0);
+        let bottom = bottom.unwrap_or(rows as usize);
+        self.terminal.set_scroll_region(
+            to_u16(top.saturating_sub(1)),
+            to_u16(bottom.saturating_sub(1)),
+        );
+    }
+
+    fn set_keypad_application_mode(&mut self) {
+        self.terminal.set_keypad_application_mode(true);
+    }
+
+    fn unset_keypad_application_mode(&mut self) {
+        self.terminal.set_keypad_application_mode(false);
+    }
+
+    fn set_active_charset(&mut self, index: CharsetIndex) {
+        *self.active_charset = index;
+    }
+
+    fn configure_charset(&mut self, index: CharsetIndex, charset: StandardCharset) {
+        self.charsets[charset_slot(index)] = charset;
+    }
+
+    fn push_title(&mut self) {
+        self.title_stack.push(self.current_title.clone());
+    }
+
+    fn pop_title(&mut self) {
+        let Some(title) = self.title_stack.pop() else {
+            return;
+        };
+
+        *self.current_title = title.clone();
+        self.callbacks.pending_title = Some(title);
+    }
+
+    fn text_area_size_chars(&mut self) {
+        let (rows, cols) = self.terminal.size();
+        self.callbacks
+            .responses
+            .push(format!("\x1b[8;{rows};{cols}t").into_bytes());
     }
 }
 
-fn first_param(params: &Params, default: u16) -> u16 {
-    params
-        .iter()
-        .next()
-        .and_then(|items| items.first())
-        .copied()
-        .filter(|value| *value != 0)
-        .unwrap_or(default)
+fn charset_slot(index: CharsetIndex) -> usize {
+    match index {
+        CharsetIndex::G0 => 0,
+        CharsetIndex::G1 => 1,
+        CharsetIndex::G2 => 2,
+        CharsetIndex::G3 => 3,
+    }
 }
 
-fn first_param_allow_zero(params: &Params, default: u16) -> u16 {
-    params
-        .iter()
-        .next()
-        .and_then(|items| items.first())
-        .copied()
-        .unwrap_or(default)
+fn cursor_row(line: i32) -> u16 {
+    if line <= 0 { 0 } else { to_u16(line as usize) }
 }
 
-fn two_params(params: &Params, first_default: u16, second_default: u16) -> (u16, u16) {
-    let mut iter = params.iter();
-    let first = iter
-        .next()
-        .and_then(|items| items.first())
-        .copied()
-        .filter(|value| *value != 0)
-        .unwrap_or(first_default);
-    let second = iter
-        .next()
-        .and_then(|items| items.first())
-        .copied()
-        .filter(|value| *value != 0)
-        .unwrap_or(second_default);
-    (first, second)
+fn to_u16(value: usize) -> u16 {
+    value.min(u16::MAX as usize) as u16
 }
 
-fn params_to_values(params: &Params) -> Vec<u16> {
-    params
-        .iter()
-        .flat_map(|items| {
-            if items.is_empty() {
-                vec![0]
-            } else {
-                items.to_vec()
-            }
-        })
-        .collect()
+fn terminal_color(color: Color) -> TerminalColor {
+    match color {
+        Color::Indexed(index) => TerminalColor::Indexed(index),
+        Color::Spec(rgb) => TerminalColor::Rgb(rgb.r, rgb.g, rgb.b),
+        Color::Named(named) => named_terminal_color(named),
+    }
 }
 
-fn parse_extended_color(values: &[u16]) -> Option<(TerminalColor, usize)> {
-    match values {
-        [5, index, ..] => Some((TerminalColor::Indexed(*index as u8), 2)),
-        [2, r, g, b, ..] => Some((TerminalColor::Rgb(*r as u8, *g as u8, *b as u8), 4)),
-        _ => None,
+fn named_terminal_color(color: NamedColor) -> TerminalColor {
+    named_color_index(color)
+        .map(TerminalColor::Indexed)
+        .unwrap_or(TerminalColor::Default)
+}
+
+fn named_color_index(color: NamedColor) -> Option<u8> {
+    match color {
+        NamedColor::Black | NamedColor::DimBlack => Some(0),
+        NamedColor::Red | NamedColor::DimRed => Some(1),
+        NamedColor::Green | NamedColor::DimGreen => Some(2),
+        NamedColor::Yellow | NamedColor::DimYellow => Some(3),
+        NamedColor::Blue | NamedColor::DimBlue => Some(4),
+        NamedColor::Magenta | NamedColor::DimMagenta => Some(5),
+        NamedColor::Cyan | NamedColor::DimCyan => Some(6),
+        NamedColor::White | NamedColor::DimWhite => Some(7),
+        NamedColor::BrightBlack => Some(8),
+        NamedColor::BrightRed => Some(9),
+        NamedColor::BrightGreen => Some(10),
+        NamedColor::BrightYellow => Some(11),
+        NamedColor::BrightBlue => Some(12),
+        NamedColor::BrightMagenta => Some(13),
+        NamedColor::BrightCyan => Some(14),
+        NamedColor::BrightWhite => Some(15),
+        NamedColor::Foreground
+        | NamedColor::Background
+        | NamedColor::Cursor
+        | NamedColor::BrightForeground
+        | NamedColor::DimForeground => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AnsiParser;
+    use crate::terminal::TerminalState;
+
+    #[test]
+    fn csi_save_and_restore_cursor_position() {
+        let mut parser = AnsiParser::new();
+        let mut terminal = TerminalState::new(4, 4, 0);
+
+        parser.process(&mut terminal, b"\x1b[3;2H");
+        parser.process(&mut terminal, b"\x1b[s");
+        parser.process(&mut terminal, b"\x1b[1;1H");
+        parser.process(&mut terminal, b"\x1b[u");
+
+        assert_eq!(terminal.cursor_position(), (2, 1));
+    }
+
+    #[test]
+    fn reports_cursor_position_via_dsr() {
+        let mut parser = AnsiParser::new();
+        let mut terminal = TerminalState::new(4, 4, 0);
+
+        parser.process(&mut terminal, b"\x1b[2;3H");
+        parser.process(&mut terminal, b"\x1b[6n");
+
+        assert_eq!(parser.take_responses(), vec![b"\x1b[2;3R".to_vec()]);
+    }
+
+    #[test]
+    fn applies_dec_special_graphics_charset() {
+        let mut parser = AnsiParser::new();
+        let mut terminal = TerminalState::new(1, 4, 0);
+
+        parser.process(&mut terminal, b"\x1b(0q");
+
+        assert_eq!(terminal.cell(0, 0).expect("cell").contents(), "\u{2500}");
+    }
+
+    #[test]
+    fn reports_text_area_size_in_characters() {
+        let mut parser = AnsiParser::new();
+        let mut terminal = TerminalState::new(7, 11, 0);
+
+        parser.process(&mut terminal, b"\x1b[18t");
+
+        assert_eq!(parser.take_responses(), vec![b"\x1b[8;7;11t".to_vec()]);
     }
 }

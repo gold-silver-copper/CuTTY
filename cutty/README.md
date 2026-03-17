@@ -1,6 +1,13 @@
 # cutty
 
-A wgpu-powered terminal emulator for CuTTY.
+A library-first terminal crate for CuTTY.
 
-This crate contains the desktop application entrypoint and rendering/runtime
-code.
+`cutty` exposes the terminal state, ANSI parser, selection model, and text
+shaping utilities as a reusable Rust library. The desktop terminal application
+ships as the companion `cutty` binary target.
+
+Run the terminal locally with:
+
+```bash
+cargo run --bin cutty
+```
