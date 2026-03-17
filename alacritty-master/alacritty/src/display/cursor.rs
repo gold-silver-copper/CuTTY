@@ -5,7 +5,7 @@ use alacritty_terminal::vte::ansi::CursorShape;
 use crate::display::SizeInfo;
 use crate::display::color::Rgb;
 use crate::display::content::RenderableCursor;
-use crate::renderer::rects::RenderRect;
+use crate::display::rects::RenderRect;
 
 /// Trait for conversion into the iterator.
 pub trait IntoRects {

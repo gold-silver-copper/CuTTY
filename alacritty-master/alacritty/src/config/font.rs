@@ -1,6 +1,5 @@
 use std::fmt;
 
-use crossfont::Size as FontSize;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -131,6 +130,33 @@ impl SecondaryFontDescription {
 
 #[derive(SerdeReplace, Debug, Clone, PartialEq, Eq)]
 struct Size(FontSize);
+
+#[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
+pub struct FontSize(f32);
+
+impl Eq for FontSize {}
+
+impl FontSize {
+    pub const fn new(size: f32) -> Self {
+        Self(size)
+    }
+
+    pub const fn from_px(size: f32) -> Self {
+        Self(size)
+    }
+
+    pub const fn as_px(self) -> f32 {
+        self.0
+    }
+
+    pub const fn as_pt(self) -> f32 {
+        self.0
+    }
+
+    pub const fn scale(self, factor: f32) -> Self {
+        Self(self.0 * factor)
+    }
+}
 
 impl Default for Size {
     fn default() -> Self {

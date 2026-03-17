@@ -1,13 +1,25 @@
 use std::iter::Peekable;
 use std::{cmp, mem};
 
-use glutin::surface::Rect;
-
 use alacritty_terminal::index::Point;
 use alacritty_terminal::selection::SelectionRange;
 use alacritty_terminal::term::{LineDamageBounds, TermDamageIterator};
 
 use crate::display::SizeInfo;
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct DamageRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl DamageRect {
+    pub const fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
+        Self { x, y, width, height }
+    }
+}
 
 /// State of the damage tracking for the [`Display`].
 ///
@@ -90,9 +102,9 @@ impl DamageTracker {
     }
 
     /// Get shaped frame damage for the active frame.
-    pub fn shape_frame_damage(&self, size_info: SizeInfo<u32>) -> Vec<Rect> {
+    pub fn shape_frame_damage(&self, size_info: SizeInfo<u32>) -> Vec<DamageRect> {
         if self.frames[0].full {
-            vec![Rect::new(0, 0, size_info.width() as i32, size_info.height() as i32)]
+            vec![DamageRect::new(0, 0, size_info.width() as i32, size_info.height() as i32)]
         } else {
             let lines_damage = RenderDamageIterator::new(
                 TermDamageIterator::new(&self.frames[0].lines, 0),
@@ -143,7 +155,7 @@ pub struct FrameDamage {
     /// Terminal lines damaged in the given frame.
     lines: Vec<LineDamageBounds>,
     /// Rectangular regions damage in the given frame.
-    rects: Vec<Rect>,
+    rects: Vec<DamageRect>,
 }
 
 impl FrameDamage {
@@ -177,7 +189,7 @@ impl FrameDamage {
         height: i32,
     ) {
         let y = viewport_y_to_damage_y(size_info, y, height);
-        self.rects.push(Rect { x, y, width, height });
+        self.rects.push(DamageRect { x, y, width, height });
     }
 
     fn reset(&mut self, num_lines: usize, num_cols: usize) {
@@ -208,7 +220,7 @@ pub fn viewport_y_to_damage_y(size_info: &SizeInfo, y: i32, height: i32) -> i32 
 }
 
 /// Convert viewport `y` coordinate to [`Rect`] damage coordinate.
-pub fn damage_y_to_viewport_y(size_info: &SizeInfo, rect: &Rect) -> i32 {
+pub fn damage_y_to_viewport_y(size_info: &SizeInfo, rect: &DamageRect) -> i32 {
     size_info.height() as i32 - rect.y - rect.height
 }
 
@@ -224,18 +236,18 @@ impl<'a> RenderDamageIterator<'a> {
     }
 
     #[inline]
-    fn rect_for_line(&self, line_damage: LineDamageBounds) -> Rect {
+    fn rect_for_line(&self, line_damage: LineDamageBounds) -> DamageRect {
         let size_info = &self.size_info;
         let y_top = size_info.height() - size_info.padding_y();
         let x = size_info.padding_x() + line_damage.left as u32 * size_info.cell_width();
         let y = y_top - (line_damage.line + 1) as u32 * size_info.cell_height();
         let width = (line_damage.right - line_damage.left + 1) as u32 * size_info.cell_width();
-        Rect::new(x as i32, y as i32, width as i32, size_info.cell_height() as i32)
+        DamageRect::new(x as i32, y as i32, width as i32, size_info.cell_height() as i32)
     }
 
     // Make sure to damage near cells to include wide chars.
     #[inline]
-    fn overdamage(size_info: &SizeInfo<u32>, mut rect: Rect) -> Rect {
+    fn overdamage(size_info: &SizeInfo<u32>, mut rect: DamageRect) -> DamageRect {
         rect.x = (rect.x - size_info.cell_width() as i32).max(0);
         rect.width = cmp::min(
             (size_info.width() as i32 - rect.x).max(0),
@@ -252,9 +264,9 @@ impl<'a> RenderDamageIterator<'a> {
 }
 
 impl Iterator for RenderDamageIterator<'_> {
-    type Item = Rect;
+    type Item = DamageRect;
 
-    fn next(&mut self) -> Option<Rect> {
+    fn next(&mut self) -> Option<DamageRect> {
         let line = self.damaged_lines.next()?;
         let size_info = &self.size_info;
         let mut total_damage_rect = Self::overdamage(size_info, self.rect_for_line(line));
@@ -274,8 +286,8 @@ impl Iterator for RenderDamageIterator<'_> {
     }
 }
 
-/// Check if two given [`glutin::surface::Rect`] overlap.
-fn rects_overlap(lhs: Rect, rhs: Rect) -> bool {
+/// Check if two given damage rectangles overlap.
+fn rects_overlap(lhs: DamageRect, rhs: DamageRect) -> bool {
     !(
         // `lhs` is left of `rhs`.
         lhs.x + lhs.width < rhs.x
@@ -288,14 +300,14 @@ fn rects_overlap(lhs: Rect, rhs: Rect) -> bool {
     )
 }
 
-/// Merge two [`glutin::surface::Rect`] by producing the smallest rectangle that contains both.
+/// Merge two damage rectangles by producing the smallest rectangle that contains both.
 #[inline]
-fn merge_rects(lhs: Rect, rhs: Rect) -> Rect {
+fn merge_rects(lhs: DamageRect, rhs: DamageRect) -> DamageRect {
     let left_x = cmp::min(lhs.x, rhs.x);
     let right_x = cmp::max(lhs.x + lhs.width, rhs.x + rhs.width);
     let y_top = cmp::max(lhs.y + lhs.height, rhs.y + rhs.height);
     let y_bottom = cmp::min(lhs.y, rhs.y);
-    Rect::new(left_x, y_bottom, right_x - left_x, y_top - y_bottom)
+    DamageRect::new(left_x, y_bottom, right_x - left_x, y_top - y_bottom)
 }
 
 #[cfg(test)]
@@ -320,23 +332,23 @@ mod tests {
         .into();
 
         // Test min clamping.
-        let rect = Rect::new(0, 0, rect_side, rect_side);
+        let rect = DamageRect::new(0, 0, rect_side, rect_side);
         let rect = RenderDamageIterator::overdamage(&size_info, rect);
-        assert_eq!(Rect::new(0, 0, rect_side + 2 * cell_size, 10 + cell_size), rect);
+        assert_eq!(DamageRect::new(0, 0, rect_side + 2 * cell_size, 10 + cell_size), rect);
 
         // Test max clamping.
-        let rect = Rect::new(bound, bound, rect_side, rect_side);
+        let rect = DamageRect::new(bound, bound, rect_side, rect_side);
         let rect = RenderDamageIterator::overdamage(&size_info, rect);
         assert_eq!(
-            Rect::new(bound - cell_size, bound - cell_size / 2, cell_size, cell_size / 2),
+            DamageRect::new(bound - cell_size, bound - cell_size / 2, cell_size, cell_size / 2),
             rect
         );
 
         // Test no clamping.
-        let rect = Rect::new(bound / 2, bound / 2, rect_side, rect_side);
+        let rect = DamageRect::new(bound / 2, bound / 2, rect_side, rect_side);
         let rect = RenderDamageIterator::overdamage(&size_info, rect);
         assert_eq!(
-            Rect::new(
+            DamageRect::new(
                 bound / 2 - cell_size,
                 bound / 2 - cell_size / 2,
                 rect_side + 2 * cell_size,
@@ -346,9 +358,9 @@ mod tests {
         );
 
         // Test out of bounds coord clamping.
-        let rect = Rect::new(bound * 2, bound * 2, rect_side, rect_side);
+        let rect = DamageRect::new(bound * 2, bound * 2, rect_side, rect_side);
         let rect = RenderDamageIterator::overdamage(&size_info, rect);
-        assert_eq!(Rect::new(bound * 2 - cell_size, bound * 2 - cell_size / 2, 0, 0), rect);
+        assert_eq!(DamageRect::new(bound * 2 - cell_size, bound * 2 - cell_size / 2, 0, 0), rect);
     }
 
     #[test]
@@ -361,7 +373,7 @@ mod tests {
         let width = 10;
         let size_info = SizeInfo::new(viewport_height, viewport_height, 5., 5., 0., 0., true);
         frame_damage.add_viewport_rect(&size_info, x, y, width, height);
-        assert_eq!(frame_damage.rects[0], Rect {
+        assert_eq!(frame_damage.rects[0], DamageRect {
             x,
             y: viewport_height as i32 - y - height,
             width,

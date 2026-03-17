@@ -43,15 +43,9 @@ mod migrate;
 mod panic;
 #[cfg(unix)]
 mod polling;
-mod renderer;
 mod scheduler;
 mod string;
 mod window_context;
-
-mod gl {
-    #![allow(clippy::all, unsafe_op_in_unsafe_fn)]
-    include!(concat!(env!("OUT_DIR"), "/gl_bindings.rs"));
-}
 
 #[cfg(unix)]
 use crate::cli::MessageOptions;

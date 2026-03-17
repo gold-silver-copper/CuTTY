@@ -1,7 +1,6 @@
 //! Process window events.
 
 use crate::ConfigMonitor;
-use glutin::config::GetGlConfig;
 use std::borrow::Cow;
 use std::cmp::min;
 use std::collections::hash_map::Entry;
@@ -21,9 +20,6 @@ use std::time::{Duration, Instant};
 use std::{env, f32, mem};
 
 use ahash::RandomState;
-use crossfont::Size as FontSize;
-use glutin::config::Config as GlutinConfig;
-use glutin::display::GetGlDisplay;
 use log::{debug, error, info, warn};
 use winit::application::ApplicationHandler;
 use winit::event::{
@@ -48,6 +44,7 @@ use alacritty_terminal::vte::ansi::NamedColor;
 use crate::cli::{IpcConfig, ParsedOptions};
 use crate::cli::{Options as CliOptions, WindowOptions};
 use crate::clipboard::Clipboard;
+use crate::config::font::FontSize;
 use crate::config::ui_config::{HintAction, HintInternalAction};
 use crate::config::{self, UiConfig};
 #[cfg(not(windows))]
@@ -93,7 +90,6 @@ pub struct Processor {
     initial_window_error: Option<Box<dyn Error>>,
     windows: HashMap<WindowId, WindowContext, RandomState>,
     proxy: EventLoopProxy<Event>,
-    gl_config: Option<GlutinConfig>,
     #[cfg(unix)]
     global_ipc_options: ParsedOptions,
     cli_options: CliOptions,
@@ -134,7 +130,6 @@ impl Processor {
             cli_options,
             proxy,
             scheduler,
-            gl_config: None,
             config: Rc::new(config),
             clipboard,
             windows: Default::default(),
@@ -144,10 +139,7 @@ impl Processor {
         }
     }
 
-    /// Create initial window and load GL platform.
-    ///
-    /// This will initialize the OpenGL Api and pick a config that
-    /// will be used for the rest of the windows.
+    /// Create initial window.
     pub fn create_initial_window(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -159,8 +151,6 @@ impl Processor {
             self.config.clone(),
             window_options,
         )?;
-
-        self.gl_config = Some(window_context.display.gl_context().config());
         self.windows.insert(window_context.id(), window_context);
 
         Ok(())
@@ -172,8 +162,6 @@ impl Processor {
         event_loop: &ActiveEventLoop,
         options: WindowOptions,
     ) -> Result<(), Box<dyn Error>> {
-        let gl_config = self.gl_config.as_ref().unwrap();
-
         // Override config with CLI/IPC options.
         let mut config_overrides = options.config_overrides();
         #[cfg(unix)]
@@ -182,7 +170,6 @@ impl Processor {
         config = config_overrides.override_config_rc(config);
 
         let window_context = WindowContext::additional(
-            gl_config,
             event_loop,
             self.proxy.clone(),
             config,
@@ -371,15 +358,7 @@ impl ApplicationHandler<Event> for Processor {
             },
             // Create a new terminal window.
             (EventType::CreateWindow(options), _) => {
-                // XXX Ensure that no context is current when creating a new window,
-                // otherwise it may lock the backing buffer of the
-                // surface of current context when asking
-                // e.g. EGL on Wayland to create a new context.
-                for window_context in self.windows.values_mut() {
-                    window_context.display.make_not_current();
-                }
-
-                if self.gl_config.is_none() {
+                if self.windows.is_empty() {
                     // Handle initial window creation in daemon mode.
                     if let Err(err) = self.create_initial_window(event_loop, options) {
                         self.initial_window_error = Some(err);
@@ -492,22 +471,6 @@ impl ApplicationHandler<Event> for Processor {
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         if self.config.debug.print_events {
             info!("Exiting the event loop");
-        }
-
-        match self.gl_config.take().map(|config| config.display()) {
-            #[cfg(not(target_os = "macos"))]
-            Some(glutin::display::Display::Egl(display)) => {
-                // Ensure that all the windows are dropped, so the destructors for
-                // Renderer and contexts ran.
-                self.windows.clear();
-
-                // SAFETY: the display is being destroyed after destroying all the
-                // windows, thus no attempt to access the EGL state will be made.
-                unsafe {
-                    display.terminate();
-                }
-            },
-            _ => (),
         }
 
         // SAFETY: The clipboard must be dropped before the event loop, so use the nop clipboard

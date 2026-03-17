@@ -10,15 +10,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use glutin::config::Config as GlutinConfig;
-use glutin::display::GetGlDisplay;
-#[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-use glutin::platform::x11::X11GlConfigExt;
 use log::info;
 use serde_json as json;
 use winit::event::{Event as WinitEvent, Modifiers, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
-use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::WindowId;
 
 use alacritty_terminal::event::Event as TerminalEvent;
@@ -38,11 +33,11 @@ use crate::display::window::Window;
 use crate::event::{
     ActionContext, Event, EventProxy, InlineSearchState, Mouse, SearchState, TouchPurpose,
 };
+use crate::input;
 #[cfg(unix)]
 use crate::logging::LOG_TARGET_IPC_CONFIG;
 use crate::message_bar::MessageBuffer;
 use crate::scheduler::Scheduler;
-use crate::{input, renderer};
 
 /// Event context for one individual Alacritty window.
 pub struct WindowContext {
@@ -70,65 +65,30 @@ pub struct WindowContext {
 }
 
 impl WindowContext {
-    /// Create initial window context that does bootstrapping the graphics API we're going to use.
+    /// Create initial window context.
     pub fn initial(
         event_loop: &ActiveEventLoop,
         proxy: EventLoopProxy<Event>,
         config: Rc<UiConfig>,
         mut options: WindowOptions,
     ) -> Result<Self, Box<dyn Error>> {
-        let raw_display_handle = event_loop.display_handle().unwrap().as_raw();
-
         let mut identity = config.window.identity.clone();
         options.window_identity.override_identity_config(&mut identity);
 
-        // Windows has different order of GL platform initialization compared to any other platform;
-        // it requires the window first.
-        #[cfg(windows)]
         let window = Window::new(event_loop, &config, &identity, &mut options)?;
-        #[cfg(windows)]
-        let raw_window_handle = Some(window.raw_window_handle());
-
-        #[cfg(not(windows))]
-        let raw_window_handle = None;
-
-        let gl_display = renderer::platform::create_gl_display(
-            raw_display_handle,
-            raw_window_handle,
-            config.debug.prefer_egl,
-        )?;
-        let gl_config = renderer::platform::pick_gl_config(&gl_display, raw_window_handle)?;
-
-        #[cfg(not(windows))]
-        let window = Window::new(
-            event_loop,
-            &config,
-            &identity,
-            &mut options,
-            #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-            gl_config.x11_visual(),
-        )?;
-
-        // Create context.
-        let gl_context =
-            renderer::platform::create_gl_context(&gl_display, &gl_config, raw_window_handle)?;
-
-        let display = Display::new(window, gl_context, &config, false)?;
+        let display = Display::new(window, &config, false)?;
 
         Self::new(display, config, options, proxy)
     }
 
-    /// Create additional context with the graphics platform other windows are using.
+    /// Create additional context.
     pub fn additional(
-        gl_config: &GlutinConfig,
         event_loop: &ActiveEventLoop,
         proxy: EventLoopProxy<Event>,
         config: Rc<UiConfig>,
         mut options: WindowOptions,
         config_overrides: ParsedOptions,
     ) -> Result<Self, Box<dyn Error>> {
-        let gl_display = gl_config.display();
-
         let mut identity = config.window.identity.clone();
         options.window_identity.override_identity_config(&mut identity);
 
@@ -139,21 +99,8 @@ impl WindowContext {
         #[cfg(not(target_os = "macos"))]
         let tabbed = false;
 
-        let window = Window::new(
-            event_loop,
-            &config,
-            &identity,
-            &mut options,
-            #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-            gl_config.x11_visual(),
-        )?;
-
-        // Create context.
-        let raw_window_handle = window.raw_window_handle();
-        let gl_context =
-            renderer::platform::create_gl_context(&gl_display, gl_config, Some(raw_window_handle))?;
-
-        let display = Display::new(window, gl_context, &config, tabbed)?;
+        let window = Window::new(event_loop, &config, &identity, &mut options)?;
+        let display = Display::new(window, &config, tabbed)?;
 
         let mut window_context = Self::new(display, config, options, proxy)?;
 

@@ -18,7 +18,7 @@
 //! println!("Average time: {}", meter.average());
 //! ```
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const NUM_SAMPLES: usize = 10;
 
@@ -35,43 +35,15 @@ pub struct Meter {
     index: usize,
 }
 
-/// Sampler.
-///
-/// Samplers record how long they are "alive" for and update the meter on drop..
-pub struct Sampler<'a> {
-    /// Reference to meter that created the sampler.
-    meter: &'a mut Meter,
-
-    /// When the sampler was created.
-    created_at: Instant,
-}
-
-impl<'a> Sampler<'a> {
-    fn new(meter: &'a mut Meter) -> Sampler<'a> {
-        Sampler { meter, created_at: Instant::now() }
-    }
-
-    #[inline]
-    fn alive_duration(&self) -> Duration {
-        self.created_at.elapsed()
-    }
-}
-
-impl Drop for Sampler<'_> {
-    fn drop(&mut self) {
-        self.meter.add_sample(self.alive_duration());
-    }
-}
-
 impl Meter {
-    /// Get a sampler.
-    pub fn sampler(&mut self) -> Sampler<'_> {
-        Sampler::new(self)
-    }
-
     /// Get the current average sample duration in microseconds.
     pub fn average(&self) -> f64 {
         self.avg
+    }
+
+    /// Record a measured duration.
+    pub fn record(&mut self, duration: Duration) {
+        self.add_sample(duration);
     }
 
     /// Add a sample.

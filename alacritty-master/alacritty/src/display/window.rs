@@ -13,12 +13,12 @@ use winit::platform::wayland::WindowAttributesExtWayland;
 use {
     std::io::Cursor,
     winit::platform::x11::{WindowAttributesExtX11, ActiveEventLoopExtX11},
-    glutin::platform::x11::X11VisualInfo,
     winit::window::Icon,
     png::Decoder,
 };
 
 use std::fmt::{self, Display, Formatter};
+use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
 use {
@@ -59,9 +59,6 @@ const IDI_ICON: u16 = 0x101;
 pub enum Error {
     /// Error creating the window.
     WindowCreation(winit::error::OsError),
-
-    /// Error dealing with fonts.
-    Font(crossfont::Error),
 }
 
 /// Result of fallible operations concerning a Window.
@@ -71,7 +68,6 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::WindowCreation(err) => err.source(),
-            Error::Font(err) => err.source(),
         }
     }
 }
@@ -80,7 +76,6 @@ impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Error::WindowCreation(err) => write!(f, "Error creating GL context; {err}"),
-            Error::Font(err) => err.fmt(f),
         }
     }
 }
@@ -88,12 +83,6 @@ impl Display for Error {
 impl From<winit::error::OsError> for Error {
     fn from(val: winit::error::OsError) -> Self {
         Error::WindowCreation(val)
-    }
-}
-
-impl From<crossfont::Error> for Error {
-    fn from(val: crossfont::Error) -> Self {
-        Error::Font(val)
     }
 }
 
@@ -113,7 +102,7 @@ pub struct Window {
     /// Hold the window when terminal exits.
     pub hold: bool,
 
-    window: WinitWindow,
+    window: Arc<WinitWindow>,
 
     /// Current window title.
     title: String,
@@ -133,16 +122,11 @@ impl Window {
         config: &UiConfig,
         identity: &Identity,
         options: &mut WindowOptions,
-        #[rustfmt::skip]
-        #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-        x11_visual: Option<X11VisualInfo>,
     ) -> Result<Window> {
         let identity = identity.clone();
         let mut window_attributes = Window::get_platform_window(
             &identity,
             &config.window,
-            #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-            x11_visual,
             #[cfg(target_os = "macos")]
             &options.window_tabbing_id.take(),
         );
@@ -183,7 +167,7 @@ impl Window {
             .with_fullscreen(config.window.fullscreen())
             .with_window_level(config.window.level.into());
 
-        let window = event_loop.create_window(window_attributes)?;
+        let window = Arc::new(event_loop.create_window(window_attributes)?);
 
         // Text cursor.
         let current_mouse_cursor = CursorIcon::Text;
@@ -220,6 +204,11 @@ impl Window {
     #[inline]
     pub fn raw_window_handle(&self) -> RawWindowHandle {
         self.window.window_handle().unwrap().as_raw()
+    }
+
+    #[inline]
+    pub fn winit_window(&self) -> Arc<WinitWindow> {
+        Arc::clone(&self.window)
     }
 
     #[inline]
@@ -289,9 +278,6 @@ impl Window {
     pub fn get_platform_window(
         identity: &Identity,
         window_config: &WindowConfig,
-        #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))] x11_visual: Option<
-            X11VisualInfo,
-        >,
     ) -> WindowAttributes {
         #[cfg(feature = "x11")]
         let icon = {
@@ -310,12 +296,6 @@ impl Window {
 
         #[cfg(feature = "x11")]
         let builder = builder.with_window_icon(Some(icon));
-
-        #[cfg(feature = "x11")]
-        let builder = match x11_visual {
-            Some(visual) => builder.with_x11_visual(visual.visual_id() as u32),
-            None => builder,
-        };
 
         builder
     }
