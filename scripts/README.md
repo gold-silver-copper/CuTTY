@@ -13,6 +13,18 @@ as the only output to STDOUT.
 
 Running this script depends on an installation of `perf`.
 
+## vtebench Comparison
+
+Run the helper script once inside CuTTY and once inside Alacritty. It executes
+`vtebench` in the current terminal, writes a labeled `.log` and `.dat`, and
+generates a comparison plot automatically once both `cutty` and `alacritty`
+results exist.
+
+```sh
+./compare-vtebench-macos.sh --vtebench-dir /path/to/vtebench --label cutty
+./compare-vtebench-macos.sh --vtebench-dir /path/to/vtebench --label alacritty
+```
+
 ## ANSI Color Tests
 
 We include a few scripts for testing the color of text inside a terminal. The
