@@ -485,6 +485,15 @@ impl<T> Term<T> {
         TermDamage::Partial(TermDamageIterator::new(&self.damage.lines, display_offset))
     }
 
+    /// Check whether the terminal currently has visible damage pending.
+    #[inline]
+    pub(crate) fn has_damage(&self) -> bool {
+        self.mode.contains(TermMode::INSERT)
+            || self.damage.full
+            || self.damage.last_cursor != self.grid.cursor.point
+            || self.damage.lines.iter().any(LineDamageBounds::is_damaged)
+    }
+
     /// Resets the terminal damage information.
     pub fn reset_damage(&mut self) {
         self.damage.reset(self.columns());
@@ -3241,6 +3250,22 @@ mod tests {
         let size = TermSize::new(10, 10);
         term.resize(size);
         assert!(term.damage.full);
+    }
+
+    #[test]
+    fn long_escape_sequences_without_output_do_not_report_damage() {
+        let size = TermSize::new(80, 24);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+        let mut parser: ansi::Processor = ansi::Processor::default();
+
+        term.reset_damage();
+
+        let sequence = b"\x1b[0;1;2;3;4;5;7;8;9;21;22;23;24;25;27;28;29;38;2;1;2;3;48;2;4;5;6m";
+        for _ in 0..256 {
+            parser.advance(&mut term, sequence);
+        }
+
+        assert!(!term.has_damage());
     }
 
     #[test]

@@ -25,6 +25,18 @@ results exist.
 ./compare-vtebench-macos.sh --vtebench-dir /path/to/vtebench --label alacritty
 ```
 
+## Kitty Throughput Benchmark
+
+Kitty's official throughput benchmark is run with `kitten __benchmark__` inside
+the terminal being tested. The helper below wraps that command, saves a labeled
+log, and can optionally enable rendering with `--render`.
+
+```sh
+./run-kitten-benchmark.sh --label cutty
+./run-kitten-benchmark.sh --label alacritty
+./run-kitten-benchmark.sh --label cutty --render
+```
+
 ## ANSI Color Tests
 
 We include a few scripts for testing the color of text inside a terminal. The
