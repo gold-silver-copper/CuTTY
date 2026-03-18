@@ -49,13 +49,50 @@ benchmark_resolve_binary() {
     benchmark_fail "unable to resolve binary (explicit='${explicit}', fallback='${fallback_path}', command='${command_name}')"
 }
 
+benchmark_app_bundle_from_path() {
+    local path="$1"
+    if [[ "${path}" == *.app ]]; then
+        printf '%s\n' "${path}"
+        return 0
+    fi
+
+    if [[ "${path}" == *.app/* ]]; then
+        local app_path="${path%%.app/*}.app"
+        printf '%s\n' "${app_path}"
+        return 0
+    fi
+
+    return 1
+}
+
 benchmark_launch_terminal() {
-    local terminal_name="$1"
-    local terminal_bin="$2"
-    shift 2
+    local terminal_kind="$1"
+    local terminal_name="$2"
+    local terminal_bin="$3"
+    shift 3
 
     benchmark_status "Launching ${terminal_name}: ${terminal_bin}"
-    "${terminal_bin}" "$@" >/dev/null 2>&1 &
+    case "${terminal_kind}" in
+        cutty|alacritty)
+            "${terminal_bin}" -e "$@" >/dev/null 2>&1 &
+            ;;
+        kitty)
+            "${terminal_bin}" "$@" >/dev/null 2>&1 &
+            ;;
+        ghostty)
+            if [[ "${OSTYPE:-}" == darwin* ]]; then
+                local app_bundle
+                app_bundle="$(benchmark_app_bundle_from_path "${terminal_bin}")" || \
+                    benchmark_fail "unable to derive Ghostty app bundle from ${terminal_bin}"
+                open -na "${app_bundle}" --args -e "$@" >/dev/null 2>&1 &
+            else
+                "${terminal_bin}" -e "$@" >/dev/null 2>&1 &
+            fi
+            ;;
+        *)
+            benchmark_fail "unsupported terminal kind: ${terminal_kind}"
+            ;;
+    esac
 }
 
 benchmark_wait_for_markers() {
@@ -66,6 +103,7 @@ benchmark_wait_for_markers() {
     local labels=("$@")
     local start_ts
     start_ts="$(date +%s)"
+    local last_reported=0
 
     while true; do
         local all_done=1
@@ -83,8 +121,14 @@ benchmark_wait_for_markers() {
 
         local now
         now="$(date +%s)"
+        local elapsed=$((now - start_ts))
         if (( now - start_ts >= timeout_seconds )); then
             benchmark_fail "timed out waiting for benchmark completion markers in ${results_dir}"
+        fi
+
+        if (( elapsed >= 15 && elapsed - last_reported >= 15 )); then
+            benchmark_status "Still waiting on: ${labels[*]} (${elapsed}s elapsed)"
+            last_reported="${elapsed}"
         fi
 
         sleep 1

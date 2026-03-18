@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import pathlib
 import re
 import sys
@@ -72,76 +73,211 @@ def parse_vtebench_log(path: pathlib.Path) -> dict[str, dict[str, float | str]]:
     return results
 
 
-def format_kitten_report(cutty: dict[str, dict[str, float]], alacritty: dict[str, dict[str, float]]) -> str:
-    names = sorted(set(cutty) | set(alacritty))
-    lines = [
-        "# Kitty Benchmark Report",
-        "",
-        "| Test | Alacritty | CuTTY | Winner |",
-        "| --- | --- | --- | --- |",
-    ]
-    for name in names:
-        a = alacritty.get(name)
-        c = cutty.get(name)
-        if a is None or c is None:
-            winner = "missing data"
-            a_text = format_missing(a)
-            c_text = format_missing(c)
-        else:
-            winner = "CuTTY" if c["mbps"] > a["mbps"] else "Alacritty" if a["mbps"] > c["mbps"] else "Tie"
-            a_text = f"`{a['seconds']:.2f}s @ {a['mbps']:.1f} MB/s`"
-            c_text = f"`{c['seconds']:.2f}s @ {c['mbps']:.1f} MB/s`"
-        lines.append(f"| {name} | {a_text} | {c_text} | {winner} |")
-    return "\n".join(lines) + "\n"
+def parse_vtebench_dat(path: pathlib.Path) -> dict[str, dict[str, float | str]]:
+    lines = [line.strip() for line in path.read_text().splitlines() if line.strip()]
+    if not lines:
+        raise ValueError(f"no vtebench dat results found in {path}")
+
+    names = lines[0].split()
+    if not names:
+        raise ValueError(f"invalid vtebench dat header in {path}")
+
+    samples_by_name: dict[str, list[int]] = {name: [] for name in names}
+    for line in lines[1:]:
+        fields = line.split()
+        if len(fields) != len(names):
+            raise ValueError(f"invalid vtebench dat row in {path}: {line}")
+
+        for name, value in zip(names, fields):
+            if value == "_":
+                continue
+            samples_by_name[name].append(int(value))
+
+    results: dict[str, dict[str, float | str]] = {}
+    for name, samples in samples_by_name.items():
+        if not samples:
+            continue
+
+        sorted_samples = sorted(samples)
+        sample_count = len(samples)
+        mean = sum(samples) / sample_count
+        percentile_index = max(((sample_count * 90 + 99) // 100) - 1, 0)
+
+        variance = 0.0
+        if sample_count > 1:
+            variance = sum((sample - mean) ** 2 for sample in samples) / (sample_count - 1)
+
+        results[name] = {
+            "samples": sample_count,
+            "size": "unknown",
+            "avg_ms": mean,
+            "p90_ms": float(sorted_samples[percentile_index]),
+            "sigma_ms": math.sqrt(variance),
+        }
+
+    if not results:
+        raise ValueError(f"no vtebench dat samples found in {path}")
+    return results
 
 
-def format_vtebench_report(
-    cutty: dict[str, dict[str, float | str]],
-    alacritty: dict[str, dict[str, float | str]],
-) -> str:
-    names = sorted(set(cutty) | set(alacritty))
-    lines = [
-        "# vtebench Report",
-        "",
-        "| Test | Alacritty | CuTTY | Winner |",
-        "| --- | --- | --- | --- |",
-    ]
-    for name in names:
-        a = alacritty.get(name)
-        c = cutty.get(name)
-        if a is None or c is None:
-            winner = "missing data"
-            a_text = format_missing(a)
-            c_text = format_missing(c)
-        else:
-            winner = "CuTTY" if c["avg_ms"] < a["avg_ms"] else "Alacritty" if a["avg_ms"] < c["avg_ms"] else "Tie"
-            a_text = f"`{a['avg_ms']:.2f}ms avg (90% < {a['p90_ms']:.0f}ms)`"
-            c_text = f"`{c['avg_ms']:.2f}ms avg (90% < {c['p90_ms']:.0f}ms)`"
-        lines.append(f"| {name} | {a_text} | {c_text} | {winner} |")
-    return "\n".join(lines) + "\n"
+def parse_named_paths(entries: list[str]) -> list[tuple[str, pathlib.Path]]:
+    parsed: list[tuple[str, pathlib.Path]] = []
+    for entry in entries:
+        if "=" not in entry:
+            raise ValueError(f"expected NAME=PATH entry, got: {entry}")
+        name, raw_path = entry.split("=", 1)
+        name = name.strip()
+        raw_path = raw_path.strip()
+        if not name or not raw_path:
+            raise ValueError(f"invalid NAME=PATH entry: {entry}")
+        parsed.append((name, pathlib.Path(raw_path)))
+    if not parsed:
+        raise ValueError("at least one terminal result is required")
+    return parsed
 
 
 def format_missing(value: object | None) -> str:
     return "`missing`" if value is None else "`present`"
 
 
+def winner_list(
+    values: list[tuple[str, float]],
+    *,
+    higher_is_better: bool,
+) -> list[str]:
+    if not values:
+        return []
+
+    key_fn = max if higher_is_better else min
+    best = key_fn(metric for _, metric in values)
+    return [name for name, metric in values if metric == best]
+
+
+def winner_names(
+    values: list[tuple[str, float]],
+    *,
+    higher_is_better: bool,
+) -> str:
+    winners = winner_list(values, higher_is_better=higher_is_better)
+    if not winners:
+        return "missing data"
+    if len(winners) == 1:
+        return winners[0]
+    return f"Tie ({', '.join(winners)})"
+
+
+def format_kitten_cell(value: dict[str, float] | None) -> str:
+    if value is None:
+        return format_missing(value)
+    return f"`{value['seconds']:.2f}s @ {value['mbps']:.1f} MB/s`"
+
+
+def format_vtebench_cell(value: dict[str, float | str] | None) -> str:
+    if value is None:
+        return format_missing(value)
+    return f"`{value['avg_ms']:.2f}ms avg (90% < {value['p90_ms']:.0f}ms)`"
+
+
+def render_markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in rows)
+    return lines
+
+
+def format_kitten_report(terminals: list[tuple[str, dict[str, dict[str, float]]]]) -> str:
+    test_names = sorted({test for _, results in terminals for test in results})
+    headers = ["Test", *[name for name, _ in terminals], "Winner"]
+    rows: list[list[str]] = []
+    wins = {name: 0 for name, _ in terminals}
+
+    for test_name in test_names:
+        row = [test_name]
+        metrics: list[tuple[str, float]] = []
+        for terminal_name, results in terminals:
+            value = results.get(test_name)
+            row.append(format_kitten_cell(value))
+            if value is not None:
+                metrics.append((terminal_name, value["mbps"]))
+        winner = winner_names(metrics, higher_is_better=True)
+        for winner_name in winner_list(metrics, higher_is_better=True):
+            wins[winner_name] += 1
+        row.append(winner)
+        rows.append(row)
+
+    summary_rows = [[name, str(wins[name])] for name, _ in terminals]
+    lines = ["# Kitty Benchmark Report", ""]
+    lines.extend(render_markdown_table(headers, rows))
+    lines.extend(["", "## Category Wins", ""])
+    lines.extend(render_markdown_table(["Terminal", "Wins"], summary_rows))
+    return "\n".join(lines) + "\n"
+
+
+def format_vtebench_report(terminals: list[tuple[str, dict[str, dict[str, float | str]]]]) -> str:
+    test_names = sorted({test for _, results in terminals for test in results})
+    headers = ["Test", *[name for name, _ in terminals], "Winner"]
+    rows: list[list[str]] = []
+    wins = {name: 0 for name, _ in terminals}
+
+    for test_name in test_names:
+        row = [test_name]
+        metrics: list[tuple[str, float]] = []
+        for terminal_name, results in terminals:
+            value = results.get(test_name)
+            row.append(format_vtebench_cell(value))
+            if value is not None:
+                metrics.append((terminal_name, float(value["avg_ms"])))
+        winner = winner_names(metrics, higher_is_better=False)
+        for winner_name in winner_list(metrics, higher_is_better=False):
+            wins[winner_name] += 1
+        row.append(winner)
+        rows.append(row)
+
+    summary_rows = [[name, str(wins[name])] for name, _ in terminals]
+    lines = ["# vtebench Report", ""]
+    lines.extend(render_markdown_table(headers, rows))
+    lines.extend(["", "## Category Wins", ""])
+    lines.extend(render_markdown_table(["Terminal", "Wins"], summary_rows))
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("kitten", "vtebench"))
-    parser.add_argument("--cutty-log", required=True)
-    parser.add_argument("--alacritty-log", required=True)
+    parser.add_argument("--terminal-log", action="append", default=[])
+    parser.add_argument("--terminal-dat", action="append", default=[])
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
-    cutty_log = pathlib.Path(args.cutty_log)
-    alacritty_log = pathlib.Path(args.alacritty_log)
     output = pathlib.Path(args.output)
 
     try:
         if args.mode == "kitten":
-            report = format_kitten_report(parse_kitten_log(cutty_log), parse_kitten_log(alacritty_log))
+            if not args.terminal_log:
+                raise ValueError("kitten mode requires at least one --terminal-log NAME=PATH")
+            terminals = [
+                (name, parse_kitten_log(path))
+                for name, path in parse_named_paths(args.terminal_log)
+            ]
+            report = format_kitten_report(terminals)
         else:
-            report = format_vtebench_report(parse_vtebench_log(cutty_log), parse_vtebench_log(alacritty_log))
+            if args.terminal_dat:
+                terminals = [
+                    (name, parse_vtebench_dat(path))
+                    for name, path in parse_named_paths(args.terminal_dat)
+                ]
+            elif args.terminal_log:
+                terminals = [
+                    (name, parse_vtebench_log(path))
+                    for name, path in parse_named_paths(args.terminal_log)
+                ]
+            else:
+                raise ValueError(
+                    "vtebench mode requires at least one --terminal-dat NAME=PATH or --terminal-log NAME=PATH"
+                )
+            report = format_vtebench_report(terminals)
     except Exception as exc:  # pragma: no cover - simple CLI wrapper
         print(f"error: {exc}", file=sys.stderr)
         return 1

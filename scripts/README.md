@@ -15,9 +15,10 @@ Running this script depends on an installation of `perf`.
 
 ## vtebench Comparison
 
-This launcher opens both CuTTY and Alacritty, runs `vtebench` inside each
-terminal, captures the `.log` and `.dat` outputs, and generates a report with
-the winner for every benchmark category.
+This launcher opens CuTTY, Alacritty, Kitty, and Ghostty, runs `vtebench`
+inside each terminal, captures a summary `.log` plus the raw `.dat` outputs,
+and generates a report with the winner for every benchmark category from the
+`.dat` files.
 
 ```sh
 ./compare-vtebench-macos.sh --vtebench-dir /path/to/vtebench
@@ -25,9 +26,9 @@ the winner for every benchmark category.
 
 ## Kitty Throughput Benchmark
 
-This launcher opens both CuTTY and Alacritty, runs kitty's official throughput
-benchmark inside each terminal, captures the logs, and generates a report with
-the winner for every benchmark category.
+This launcher opens CuTTY, Alacritty, Kitty, and Ghostty, runs kitty's official
+throughput benchmark inside each terminal, captures the logs, and generates a
+report with the winner for every benchmark category.
 
 ```sh
 ./run-kitten-benchmark.sh

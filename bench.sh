@@ -10,14 +10,16 @@ usage() {
     cat <<'EOF'
 Usage: ./bench.sh --vtebench-dir PATH [options]
 
-Run the kitty benchmark and vtebench end-to-end. The script launches CuTTY and
-Alacritty sequentially for each benchmark, captures the logs, generates winner
-reports, and prints both reports at the end.
+Run the kitty benchmark and vtebench end-to-end. The script launches CuTTY,
+Alacritty, Kitty, and Ghostty sequentially for each benchmark, captures the
+logs, generates winner reports, and prints both reports at the end.
 
 Options:
   --vtebench-dir PATH   Path to a local alacritty/vtebench checkout.
   --cutty-bin PATH      Path to the CuTTY binary.
   --alacritty-bin PATH  Path to the Alacritty binary.
+  --kitty-bin PATH      Path to the Kitty terminal binary.
+  --ghostty-bin PATH    Path to the Ghostty terminal binary.
   --kitten-bin PATH     Path to the `kitten` binary.
   --results-dir PATH    Root directory for all benchmark artifacts.
                         Default: ./target/bench-results
@@ -39,6 +41,8 @@ status() {
 VTEBENCH_DIR=""
 CUTTY_BIN=""
 ALACRITTY_BIN=""
+KITTY_BIN=""
+GHOSTTY_BIN=""
 KITTEN_BIN=""
 RESULTS_DIR="${DEFAULT_RESULTS_DIR}"
 RENDER_FLAG=0
@@ -56,6 +60,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --alacritty-bin)
             ALACRITTY_BIN="$2"
+            shift 2
+            ;;
+        --kitty-bin)
+            KITTY_BIN="$2"
+            shift 2
+            ;;
+        --ghostty-bin)
+            GHOSTTY_BIN="$2"
             shift 2
             ;;
         --kitten-bin)
@@ -111,6 +123,16 @@ fi
 if [[ -n "${ALACRITTY_BIN}" ]]; then
     kitten_cmd+=(--alacritty-bin "${ALACRITTY_BIN}")
     vtebench_cmd+=(--alacritty-bin "${ALACRITTY_BIN}")
+fi
+
+if [[ -n "${KITTY_BIN}" ]]; then
+    kitten_cmd+=(--kitty-bin "${KITTY_BIN}")
+    vtebench_cmd+=(--kitty-bin "${KITTY_BIN}")
+fi
+
+if [[ -n "${GHOSTTY_BIN}" ]]; then
+    kitten_cmd+=(--ghostty-bin "${GHOSTTY_BIN}")
+    vtebench_cmd+=(--ghostty-bin "${GHOSTTY_BIN}")
 fi
 
 if [[ -n "${KITTEN_BIN}" ]]; then

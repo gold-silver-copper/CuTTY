@@ -10,19 +10,23 @@ DEFAULT_RESULTS_ROOT="${REPO_ROOT}/target/vtebench-results"
 DEFAULT_CUTTY_BIN="${REPO_ROOT}/target/release/cutty"
 DEFAULT_CUTTY_DEBUG_BIN="${REPO_ROOT}/target/debug/cutty"
 DEFAULT_ALACRITTY_APP="/Applications/Alacritty.app/Contents/MacOS/alacritty"
+DEFAULT_KITTY_APP="/Applications/kitty.app/Contents/MacOS/kitty"
+DEFAULT_GHOSTTY_APP="/Applications/Ghostty.app/Contents/MacOS/ghostty"
 DEFAULT_TIMEOUT=1800
 
 usage() {
     cat <<'EOF'
 Usage: compare-vtebench-macos.sh --vtebench-dir PATH [options]
 
-Launch CuTTY and Alacritty, run vtebench inside each terminal, save the logs,
-and compile a report with a winner for every benchmark category.
+Launch CuTTY, Alacritty, Kitty, and Ghostty, run vtebench inside each terminal,
+save the logs, and compile a report with a winner for every benchmark category.
 
 Options:
   --vtebench-dir PATH   Path to a local alacritty/vtebench checkout.
   --cutty-bin PATH      Path to the CuTTY binary.
   --alacritty-bin PATH  Path to the Alacritty binary.
+  --kitty-bin PATH      Path to the Kitty terminal binary.
+  --ghostty-bin PATH    Path to the Ghostty terminal binary.
   --results-dir PATH    Directory for logs, .dat files, plots, and reports.
                         Default: ./target/vtebench-results
   --timeout-seconds N   Max time to wait for both benchmarks. Default: 1800.
@@ -33,6 +37,8 @@ EOF
 VTEBENCH_DIR=""
 CUTTY_BIN=""
 ALACRITTY_BIN=""
+KITTY_BIN=""
+GHOSTTY_BIN=""
 RESULTS_DIR="${DEFAULT_RESULTS_ROOT}"
 TIMEOUT_SECONDS="${DEFAULT_TIMEOUT}"
 
@@ -48,6 +54,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --alacritty-bin)
             ALACRITTY_BIN="$2"
+            shift 2
+            ;;
+        --kitty-bin)
+            KITTY_BIN="$2"
+            shift 2
+            ;;
+        --ghostty-bin)
+            GHOSTTY_BIN="$2"
             shift 2
             ;;
         --results-dir)
@@ -85,61 +99,67 @@ else
     benchmark_fail "unable to find a CuTTY binary; tried ${DEFAULT_CUTTY_BIN} and ${DEFAULT_CUTTY_DEBUG_BIN}"
 fi
 ALACRITTY_BIN="$(benchmark_resolve_binary "${ALACRITTY_BIN}" "${DEFAULT_ALACRITTY_APP}" "alacritty")"
+KITTY_BIN="$(benchmark_resolve_binary "${KITTY_BIN}" "${DEFAULT_KITTY_APP}" "kitty")"
+GHOSTTY_BIN="$(benchmark_resolve_binary "${GHOSTTY_BIN}" "${DEFAULT_GHOSTTY_APP}" "ghostty")"
 PYTHON_BIN="$(benchmark_resolve_binary "" "" "python3")"
-
-rm -f \
-    "${RESULTS_DIR}/cutty.done" "${RESULTS_DIR}/cutty.status" \
-    "${RESULTS_DIR}/alacritty.done" "${RESULTS_DIR}/alacritty.status"
 
 CHILD_SCRIPT="${SCRIPT_DIR}/benchmark_child.sh"
 REPORT_SCRIPT="${SCRIPT_DIR}/benchmark_report.py"
+terminal_specs=(
+    "cutty|CuTTY|cutty|${CUTTY_BIN}"
+    "alacritty|Alacritty|alacritty|${ALACRITTY_BIN}"
+    "kitty|Kitty|kitty|${KITTY_BIN}"
+    "ghostty|Ghostty|ghostty|${GHOSTTY_BIN}"
+)
 
-benchmark_launch_terminal \
-    "CuTTY" \
-    "${CUTTY_BIN}" \
-    -e bash "${CHILD_SCRIPT}" \
-    --mode vtebench \
-    --label cutty \
-    --results-dir "${RESULTS_DIR}" \
-    --vtebench-dir "${VTEBENCH_DIR}"
+for spec in "${terminal_specs[@]}"; do
+    IFS="|" read -r label display_name terminal_kind terminal_bin <<< "${spec}"
+    rm -f "${RESULTS_DIR}/${label}.done" "${RESULTS_DIR}/${label}.status"
 
-benchmark_status "Waiting for CuTTY vtebench run to finish"
-benchmark_wait_for_markers "${RESULTS_DIR}" "${TIMEOUT_SECONDS}" cutty
-benchmark_check_status_files "${RESULTS_DIR}" cutty
+    child_args=(
+        bash "${CHILD_SCRIPT}"
+        --mode vtebench
+        --label "${label}"
+        --results-dir "${RESULTS_DIR}"
+        --vtebench-dir "${VTEBENCH_DIR}"
+    )
 
-benchmark_launch_terminal \
-    "Alacritty" \
-    "${ALACRITTY_BIN}" \
-    -e bash "${CHILD_SCRIPT}" \
-    --mode vtebench \
-    --label alacritty \
-    --results-dir "${RESULTS_DIR}" \
-    --vtebench-dir "${VTEBENCH_DIR}"
-
-benchmark_status "Waiting for Alacritty vtebench run to finish"
-benchmark_wait_for_markers "${RESULTS_DIR}" "${TIMEOUT_SECONDS}" alacritty
-benchmark_check_status_files "${RESULTS_DIR}" alacritty
+    benchmark_launch_terminal "${terminal_kind}" "${display_name}" "${terminal_bin}" "${child_args[@]}"
+    benchmark_status "Waiting for ${display_name} vtebench run to finish"
+    benchmark_wait_for_markers "${RESULTS_DIR}" "${TIMEOUT_SECONDS}" "${label}"
+    benchmark_check_status_files "${RESULTS_DIR}" "${label}"
+done
 
 PLOT_FILE="${RESULTS_DIR}/comparison.svg"
 if [[ -x "${VTEBENCH_DIR}/gnuplot/summary.sh" ]]; then
+    benchmark_status "Generating vtebench plot"
     "${VTEBENCH_DIR}/gnuplot/summary.sh" \
         "${RESULTS_DIR}/cutty.dat" \
         "${RESULTS_DIR}/alacritty.dat" \
+        "${RESULTS_DIR}/kitty.dat" \
+        "${RESULTS_DIR}/ghostty.dat" \
         "${PLOT_FILE}" >/dev/null 2>&1 || true
 fi
 
 REPORT_FILE="${RESULTS_DIR}/report.md"
+benchmark_status "Generating vtebench report"
 "${PYTHON_BIN}" "${REPORT_SCRIPT}" \
     vtebench \
-    --cutty-log "${RESULTS_DIR}/cutty.log" \
-    --alacritty-log "${RESULTS_DIR}/alacritty.log" \
+    --terminal-dat "CuTTY=${RESULTS_DIR}/cutty.dat" \
+    --terminal-dat "Alacritty=${RESULTS_DIR}/alacritty.dat" \
+    --terminal-dat "Kitty=${RESULTS_DIR}/kitty.dat" \
+    --terminal-dat "Ghostty=${RESULTS_DIR}/ghostty.dat" \
     --output "${REPORT_FILE}"
 
 echo
 echo "Saved CuTTY log: ${RESULTS_DIR}/cutty.log"
 echo "Saved Alacritty log: ${RESULTS_DIR}/alacritty.log"
+echo "Saved Kitty log: ${RESULTS_DIR}/kitty.log"
+echo "Saved Ghostty log: ${RESULTS_DIR}/ghostty.log"
 echo "Saved CuTTY dat: ${RESULTS_DIR}/cutty.dat"
 echo "Saved Alacritty dat: ${RESULTS_DIR}/alacritty.dat"
+echo "Saved Kitty dat: ${RESULTS_DIR}/kitty.dat"
+echo "Saved Ghostty dat: ${RESULTS_DIR}/ghostty.dat"
 if [[ -f "${PLOT_FILE}" ]]; then
     echo "Saved comparison plot: ${PLOT_FILE}"
 fi

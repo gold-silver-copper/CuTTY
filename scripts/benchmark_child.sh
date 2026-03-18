@@ -81,6 +81,38 @@ DAT_FILE="${RESULTS_DIR}/${LABEL}.dat"
 
 rm -f "${STATUS_FILE}" "${DONE_FILE}"
 
+filter_vtebench_summary() {
+    python3 -c '
+import re
+import sys
+
+ansi = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\].*?(?:\x07|\x1b\\\\)|[@-Z\\\\-_])")
+header = re.compile(r"^\s{2}[A-Za-z0-9_]+ \(\d+ samples @ [^)]+\):\s*$")
+metrics = re.compile(r"^\s{4}[0-9.]+ms avg \(90% < [0-9.]+ms\) \+\-[0-9.]+ms\s*$")
+
+printing = False
+pending_blank = False
+
+for raw_line in sys.stdin.buffer:
+    line = ansi.sub("", raw_line.decode("utf-8", "ignore")).replace("\r", "").rstrip("\n")
+    if line == "Results:":
+        printing = True
+        pending_blank = False
+        print("Results:")
+        continue
+    if not printing:
+        continue
+    if not line.strip():
+        pending_blank = True
+        continue
+    if header.match(line) or metrics.match(line):
+        if pending_blank:
+            print()
+            pending_blank = False
+        print(line)
+' > "${LOG_FILE}"
+}
+
 run_vtebench() {
     [[ -n "${VTEBENCH_DIR}" ]] || benchmark_fail "--vtebench-dir is required for vtebench mode"
     benchmark_require_dir "${VTEBENCH_DIR}" "vtebench directory"
@@ -90,7 +122,7 @@ run_vtebench() {
     (
         cd "${VTEBENCH_DIR}"
         cargo run --release -- --dat "${DAT_FILE}"
-    ) 2>&1 | tee "${LOG_FILE}"
+    ) 2>&1 | tee >(filter_vtebench_summary)
 }
 
 run_kitten() {
