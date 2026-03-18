@@ -2,7 +2,7 @@
 
 <p align="center">
   <img alt="CuTTY, the Copper Teletype"
-       src="./extra/promo/cutty-readme.png">
+       src="./CuTTY.png">
 </p>
 
 ## About
