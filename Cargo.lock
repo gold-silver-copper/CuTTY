@@ -574,7 +574,6 @@ dependencies = [
 name = "cutty_config"
 version = "0.2.4-dev"
 dependencies = [
- "cutty_config_derive",
  "log",
  "serde",
  "toml",

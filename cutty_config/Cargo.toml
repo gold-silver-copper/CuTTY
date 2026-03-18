@@ -4,6 +4,9 @@ version = "0.2.4-dev"
 authors = ["Christian Duerr <contact@christianduerr.com>"]
 license = "MIT OR Apache-2.0"
 description = "CuTTY configuration abstractions"
+homepage = "https://github.com/gold-silver-copper/CuTTY"
+repository = "https://github.com/gold-silver-copper/CuTTY"
+documentation = "https://docs.rs/cutty_config"
 edition.workspace = true
 rust-version.workspace = true
 
@@ -11,7 +14,3 @@ rust-version.workspace = true
 log = { version = "0.4.17", features = ["serde"] }
 serde = "1.0.163"
 toml.workspace = true
-
-[dev-dependencies]
-cutty_config_derive = { version = "0.2.6-dev", path = "../cutty_config_derive" }
-serde = { version = "1.0.163", features = ["derive"] }

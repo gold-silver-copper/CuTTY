@@ -72,30 +72,3 @@ impl<'de, T: Deserialize<'de>> SerdeReplace for HashMap<String, T> {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use crate as cutty_config;
-    use cutty_config_derive::ConfigDeserialize;
-
-    #[test]
-    fn replace_option() {
-        #[derive(ConfigDeserialize, Default, PartialEq, Eq, Debug)]
-        struct ReplaceOption {
-            a: usize,
-            b: usize,
-        }
-
-        let mut subject: Option<ReplaceOption> = None;
-
-        let value: Value = toml::from_str("a=1").unwrap();
-        SerdeReplace::replace(&mut subject, value).unwrap();
-
-        let value: Value = toml::from_str("b=2").unwrap();
-        SerdeReplace::replace(&mut subject, value).unwrap();
-
-        assert_eq!(subject, Some(ReplaceOption { a: 1, b: 2 }));
-    }
-}

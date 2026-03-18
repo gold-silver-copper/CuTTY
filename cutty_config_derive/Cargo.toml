@@ -4,6 +4,9 @@ version = "0.2.6-dev"
 authors = ["Christian Duerr <contact@christianduerr.com>"]
 license = "MIT OR Apache-2.0"
 description = "Failure resistant deserialization derive"
+homepage = "https://github.com/gold-silver-copper/CuTTY"
+repository = "https://github.com/gold-silver-copper/CuTTY"
+documentation = "https://docs.rs/cutty_config_derive"
 edition.workspace = true
 rust-version.workspace = true
 
