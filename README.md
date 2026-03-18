@@ -1,7 +1,3 @@
-<p align="center">
-    <img width="200" alt="CuTTY Logo" src="./extra/logo/cutty-term.png">
-</p>
-
 <h1 align="center">CuTTY, the Copper Teletype</h1>
 
 <p align="center">
