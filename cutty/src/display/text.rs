@@ -3,9 +3,8 @@ use std::collections::HashMap;
 
 use parley::layout::PositionedLayoutItem;
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, FontFamilyName,
-    FontStyle as ParleyFontStyle, FontWeight, GenericFamily, Layout, LayoutContext, LineHeight,
-    StyleProperty,
+    Alignment, AlignmentOptions, FontContext, FontFamily, FontStack, FontStyle as ParleyFontStyle,
+    FontWeight, GenericFamily, Layout, LayoutContext, LineHeight, StyleProperty,
 };
 use vello::peniko::{Brush, Color};
 
@@ -126,7 +125,7 @@ impl TextSystem {
         let (font_style, font_weight) = font_style(variant);
 
         let mut builder = self.layout_cx.ranged_builder(&mut self.font_cx, &text, 1.0, true);
-        builder.push_default(StyleProperty::FontFamily(family));
+        builder.push_default(family);
         builder.push_default(StyleProperty::FontSize(self.font.size().as_px()));
         builder.push_default(StyleProperty::FontStyle(font_style));
         builder.push_default(StyleProperty::FontWeight(font_weight));
@@ -146,7 +145,7 @@ impl TextSystem {
         let family = self.font_family(FontVariant::Normal);
         let font_size = self.font.size().as_px();
         let mut builder = self.layout_cx.ranged_builder(&mut self.font_cx, sample, 1.0, true);
-        builder.push_default(StyleProperty::FontFamily(family));
+        builder.push_default(family);
         builder.push_default(StyleProperty::FontSize(font_size));
         builder.push_default(StyleProperty::Brush(Brush::Solid(Color::WHITE)));
 
@@ -179,8 +178,8 @@ impl TextSystem {
         }
     }
 
-    fn font_family(&self, variant: FontVariant) -> FontFamily<'static> {
-        FontFamily::List(Cow::Owned(font_family_stack(&self.font, variant)))
+    fn font_family(&self, variant: FontVariant) -> FontStack<'static> {
+        FontStack::List(Cow::Owned(font_family_stack(&self.font, variant)))
     }
 }
 
@@ -217,7 +216,7 @@ pub fn color_from_rgb(color: Rgb) -> Color {
     Color::from_rgb8(color.r, color.g, color.b)
 }
 
-fn font_family_stack(font: &Font, variant: FontVariant) -> Vec<FontFamilyName<'static>> {
+fn font_family_stack(font: &Font, variant: FontVariant) -> Vec<FontFamily<'static>> {
     let mut families = Vec::new();
     push_configured_family_names(&mut families, variant_family_spec(font, variant));
 
@@ -242,26 +241,32 @@ fn variant_family_spec(font: &Font, variant: FontVariant) -> Cow<'_, str> {
     }
 }
 
-fn push_configured_family_names(
-    families: &mut Vec<FontFamilyName<'static>>,
-    spec: impl AsRef<str>,
-) {
+fn push_configured_family_names(families: &mut Vec<FontFamily<'static>>, spec: impl AsRef<str>) {
     let spec = spec.as_ref().trim();
     if spec.is_empty() {
         return;
     }
 
-    match FontFamilyName::parse_css_list(spec).collect::<Result<Vec<_>, _>>() {
-        Ok(parsed) if !parsed.is_empty() => {
-            for family in parsed {
-                push_family_name(families, family.into_owned());
+    let parsed = FontFamily::parse_list(spec).collect::<Vec<_>>();
+    if parsed.is_empty() {
+        push_family_name(families, named_family(spec));
+    } else {
+        for family in parsed {
+            match family {
+                FontFamily::Named(name) => push_family_name(families, named_family(name.as_ref())),
+                FontFamily::Generic(family) => {
+                    push_family_name(families, FontFamily::Generic(family))
+                },
             }
-        },
-        _ => push_family_name(families, FontFamilyName::named(spec).into_owned()),
+        }
     }
 }
 
-fn push_family_name(families: &mut Vec<FontFamilyName<'static>>, family: FontFamilyName<'static>) {
+fn named_family(name: impl AsRef<str>) -> FontFamily<'static> {
+    FontFamily::Named(Cow::Owned(name.as_ref().to_owned()))
+}
+
+fn push_family_name(families: &mut Vec<FontFamily<'static>>, family: FontFamily<'static>) {
     if !families.contains(&family) {
         families.push(family);
     }
@@ -269,7 +274,9 @@ fn push_family_name(families: &mut Vec<FontFamilyName<'static>>, family: FontFam
 
 #[cfg(test)]
 mod tests {
-    use parley::{FontFamilyName, GenericFamily};
+    use std::borrow::Cow;
+
+    use parley::{FontFamily, GenericFamily};
 
     use super::{FontVariant, TextSystem, font_family_stack, push_configured_family_names};
     use crate::config::font::Font;
@@ -294,9 +301,9 @@ mod tests {
         push_configured_family_names(&mut families, "'SF Mono', monospace, 'Noto Sans Symbols 2'");
 
         assert_eq!(families, vec![
-            FontFamilyName::named("SF Mono").into_owned(),
+            FontFamily::Named(Cow::Owned(String::from("SF Mono"))),
             GenericFamily::Monospace.into(),
-            FontFamilyName::named("Noto Sans Symbols 2").into_owned(),
+            FontFamily::Named(Cow::Owned(String::from("Noto Sans Symbols 2"))),
         ]);
     }
 
@@ -306,7 +313,7 @@ mod tests {
 
         push_configured_family_names(&mut families, "'broken");
 
-        assert_eq!(families, vec![FontFamilyName::named("'broken").into_owned()]);
+        assert_eq!(families, vec![FontFamily::Named(Cow::Owned(String::from("broken")))]);
     }
 
     #[test]
