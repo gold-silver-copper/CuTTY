@@ -3,8 +3,9 @@ use std::collections::HashMap;
 
 use parley::layout::PositionedLayoutItem;
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle as ParleyFontStyle, FontWeight,
-    Layout, LayoutContext, LineHeight, StyleProperty,
+    Alignment, AlignmentOptions, FontContext, FontFamily, FontFamilyName,
+    FontStyle as ParleyFontStyle, FontWeight, GenericFamily, Layout, LayoutContext, LineHeight,
+    StyleProperty,
 };
 use vello::peniko::{Brush, Color};
 
@@ -179,13 +180,7 @@ impl TextSystem {
     }
 
     fn font_family(&self, variant: FontVariant) -> FontFamily<'static> {
-        let family = match variant {
-            FontVariant::Normal => self.font.normal().family.clone(),
-            FontVariant::Bold => self.font.bold().family,
-            FontVariant::Italic => self.font.italic().family,
-            FontVariant::BoldItalic => self.font.bold_italic().family,
-        };
-        FontFamily::Source(Cow::Owned(family))
+        FontFamily::List(Cow::Owned(font_family_stack(&self.font, variant)))
     }
 }
 
@@ -222,9 +217,61 @@ pub fn color_from_rgb(color: Rgb) -> Color {
     Color::from_rgb8(color.r, color.g, color.b)
 }
 
+fn font_family_stack(font: &Font, variant: FontVariant) -> Vec<FontFamilyName<'static>> {
+    let mut families = Vec::new();
+    push_configured_family_names(&mut families, variant_family_spec(font, variant));
+
+    if variant != FontVariant::Normal {
+        push_configured_family_names(&mut families, &font.normal().family);
+    }
+
+    push_family_name(&mut families, GenericFamily::UiMonospace.into());
+    push_family_name(&mut families, GenericFamily::Monospace.into());
+    push_family_name(&mut families, GenericFamily::SystemUi.into());
+    push_family_name(&mut families, GenericFamily::Emoji.into());
+
+    families
+}
+
+fn variant_family_spec(font: &Font, variant: FontVariant) -> Cow<'_, str> {
+    match variant {
+        FontVariant::Normal => Cow::Borrowed(&font.normal().family),
+        FontVariant::Bold => Cow::Owned(font.bold().family),
+        FontVariant::Italic => Cow::Owned(font.italic().family),
+        FontVariant::BoldItalic => Cow::Owned(font.bold_italic().family),
+    }
+}
+
+fn push_configured_family_names(
+    families: &mut Vec<FontFamilyName<'static>>,
+    spec: impl AsRef<str>,
+) {
+    let spec = spec.as_ref().trim();
+    if spec.is_empty() {
+        return;
+    }
+
+    match FontFamilyName::parse_css_list(spec).collect::<Result<Vec<_>, _>>() {
+        Ok(parsed) if !parsed.is_empty() => {
+            for family in parsed {
+                push_family_name(families, family.into_owned());
+            }
+        },
+        _ => push_family_name(families, FontFamilyName::named(spec).into_owned()),
+    }
+}
+
+fn push_family_name(families: &mut Vec<FontFamilyName<'static>>, family: FontFamilyName<'static>) {
+    if !families.contains(&family) {
+        families.push(family);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::TextSystem;
+    use parley::{FontFamilyName, GenericFamily};
+
+    use super::{FontVariant, TextSystem, font_family_stack, push_configured_family_names};
     use crate::config::font::Font;
 
     #[test]
@@ -238,5 +285,41 @@ mod tests {
         let updated = text.metrics();
         assert!(updated.cell_width >= original.cell_width);
         assert!(updated.cell_height >= original.cell_height);
+    }
+
+    #[test]
+    fn css_family_lists_are_preserved_before_terminal_fallbacks() {
+        let mut families = Vec::new();
+
+        push_configured_family_names(&mut families, "'SF Mono', monospace, 'Noto Sans Symbols 2'");
+
+        assert_eq!(families, vec![
+            FontFamilyName::named("SF Mono").into_owned(),
+            GenericFamily::Monospace.into(),
+            FontFamilyName::named("Noto Sans Symbols 2").into_owned(),
+        ]);
+    }
+
+    #[test]
+    fn invalid_css_family_spec_falls_back_to_literal_name() {
+        let mut families = Vec::new();
+
+        push_configured_family_names(&mut families, "'broken");
+
+        assert_eq!(families, vec![FontFamilyName::named("'broken").into_owned()]);
+    }
+
+    #[test]
+    fn variant_family_stack_deduplicates_configured_and_generic_fallbacks() {
+        let families = font_family_stack(&Font::default(), FontVariant::Bold);
+
+        assert_eq!(
+            families.iter().filter(|family| **family == GenericFamily::Monospace.into()).count(),
+            1
+        );
+        assert!(families.contains(&GenericFamily::UiMonospace.into()));
+        assert!(families.contains(&GenericFamily::SystemUi.into()));
+        assert!(families.contains(&GenericFamily::Emoji.into()));
+        assert!(!families.is_empty());
     }
 }
