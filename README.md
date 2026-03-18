@@ -70,34 +70,51 @@ A guideline about contributing to CuTTY can be found in the
 
 Benchmarking terminal emulators is complicated. CuTTY uses
 [vtebench](https://github.com/alacritty/vtebench) and kitty's performance
-benchmark to quantify terminal throughput. On the local runs from March 17,
-2026, CuTTY beat Alacritty across the measured benchmark set, including the
-long-escape workload after the escape-path optimization work.
+benchmark to quantify terminal throughput. The repo includes a single runner,
+[`bench.sh`](./bench.sh), which launches CuTTY, Alacritty, Kitty, and Ghostty
+sequentially, records both benchmark suites, and prints a final winner report.
 
-Kitty benchmark results from March 17, 2026:
+On the local runs from March 18, 2026, CuTTY won 4 of 5 kitty benchmark
+categories and all 10 measured `vtebench` categories.
 
-| Test | Alacritty | CuTTY |
-| --- | --- | --- |
-| Only ASCII chars | `2.61s @ 76.7 MB/s` | `1.78s @ 112.5 MB/s` |
-| Unicode chars | `2.04s @ 88.7 MB/s` | `1.28s @ 141.5 MB/s` |
-| CSI codes with few chars | `1.78s @ 56.2 MB/s` | `1.37s @ 73.2 MB/s` |
-| Long escape codes | `5.11s @ 153.5 MB/s` | `4.27s @ 183.8 MB/s` |
-| Images | `2.31s @ 231.3 MB/s` | `1.57s @ 340.5 MB/s` |
+Kitty benchmark results from March 18, 2026:
 
-`vtebench` results from March 17, 2026:
+| Test | CuTTY | Alacritty | Kitty | Ghostty | Winner |
+| --- | --- | --- | --- | --- | --- |
+| CSI codes with few chars | `1.38s @ 72.4 MB/s` | `1.76s @ 56.9 MB/s` | `1.74s @ 57.5 MB/s` | `2.36s @ 42.3 MB/s` | CuTTY |
+| Images | `1.56s @ 342.1 MB/s` | `2.29s @ 233.0 MB/s` | `2.04s @ 261.4 MB/s` | `10.35s @ 51.5 MB/s` | CuTTY |
+| Long escape codes | `4.82s @ 162.7 MB/s` | `6.28s @ 124.9 MB/s` | `2.42s @ 324.1 MB/s` | `11.02s @ 71.2 MB/s` | Kitty |
+| Only ASCII chars | `1.88s @ 106.5 MB/s` | `2.57s @ 77.7 MB/s` | `2.07s @ 96.4 MB/s` | `2.58s @ 77.5 MB/s` | CuTTY |
+| Unicode chars | `1.28s @ 141.1 MB/s` | `2.04s @ 88.6 MB/s` | `1.46s @ 124.1 MB/s` | `1.73s @ 104.3 MB/s` | CuTTY |
 
-| Test | Alacritty | CuTTY |
-| --- | --- | --- |
-| dense_cells | `11.3ms avg (90% < 13ms)` | `8.28ms avg (90% < 9ms)` |
-| medium_cells | `12.24ms avg (90% < 14ms)` | `10.03ms avg (90% < 12ms)` |
-| scrolling | `20.52ms avg (90% < 23ms)` | `18.83ms avg (90% < 21ms)` |
-| scrolling_bottom_region | `18.59ms avg (90% < 21ms)` | `14.57ms avg (90% < 17ms)` |
-| scrolling_bottom_small_region | `18.65ms avg (90% < 22ms)` | `14.66ms avg (90% < 17ms)` |
-| scrolling_fullscreen | `26.6ms avg (90% < 30ms)` | `23.16ms avg (90% < 25ms)` |
-| scrolling_top_region | `36.05ms avg (90% < 40ms)` | `32.05ms avg (90% < 35ms)` |
-| scrolling_top_small_region | `18.83ms avg (90% < 23ms)` | `14.62ms avg (90% < 17ms)` |
-| sync_medium_cells | `16.66ms avg (90% < 20ms)` | `16.29ms avg (90% < 18ms)` |
-| unicode | `11.02ms avg (90% < 15ms)` | `7.97ms avg (90% < 10ms)` |
+| Terminal | Wins |
+| --- | --- |
+| CuTTY | 4 |
+| Alacritty | 0 |
+| Kitty | 1 |
+| Ghostty | 0 |
+
+`vtebench` results from March 18, 2026:
+
+| Test | CuTTY | Alacritty | Kitty | Ghostty | Winner |
+| --- | --- | --- | --- | --- | --- |
+| dense_cells | `8.04ms avg (90% < 8ms)` | `10.23ms avg (90% < 11ms)` | `17.99ms avg (90% < 18ms)` | `9.57ms avg (90% < 10ms)` | CuTTY |
+| medium_cells | `11.06ms avg (90% < 12ms)` | `12.11ms avg (90% < 13ms)` | `14.19ms avg (90% < 15ms)` | `13.66ms avg (90% < 14ms)` | CuTTY |
+| scrolling | `112.21ms avg (90% < 113ms)` | `120.73ms avg (90% < 122ms)` | `163.10ms avg (90% < 183ms)` | `115.32ms avg (90% < 117ms)` | CuTTY |
+| scrolling_bottom_region | `111.58ms avg (90% < 112ms)` | `120.70ms avg (90% < 122ms)` | `115.21ms avg (90% < 116ms)` | `116.15ms avg (90% < 118ms)` | CuTTY |
+| scrolling_bottom_small_region | `111.30ms avg (90% < 112ms)` | `120.70ms avg (90% < 122ms)` | `114.79ms avg (90% < 116ms)` | `115.71ms avg (90% < 117ms)` | CuTTY |
+| scrolling_fullscreen | `187.54ms avg (90% < 189ms)` | `194.91ms avg (90% < 196ms)` | `302.24ms avg (90% < 311ms)` | `194.41ms avg (90% < 196ms)` | CuTTY |
+| scrolling_top_region | `114.48ms avg (90% < 116ms)` | `124.51ms avg (90% < 125ms)` | `115.09ms avg (90% < 116ms)` | `116.45ms avg (90% < 118ms)` | CuTTY |
+| scrolling_top_small_region | `111.98ms avg (90% < 113ms)` | `121.12ms avg (90% < 122ms)` | `115.09ms avg (90% < 116ms)` | `116.44ms avg (90% < 118ms)` | CuTTY |
+| sync_medium_cells | `12.45ms avg (90% < 13ms)` | `15.11ms avg (90% < 15ms)` | `45.89ms avg (90% < 46ms)` | `16.36ms avg (90% < 17ms)` | CuTTY |
+| unicode | `7.65ms avg (90% < 8ms)` | `10.60ms avg (90% < 11ms)` | `14.18ms avg (90% < 9ms)` | `9.03ms avg (90% < 9ms)` | CuTTY |
+
+| Terminal | Wins |
+| --- | --- |
+| CuTTY | 10 |
+| Alacritty | 0 |
+| Kitty | 0 |
+| Ghostty | 0 |
 
 Those numbers are specific to that benchmark set, machine, and configuration.
 The best way to evaluate terminal performance is still to test your own setup.
