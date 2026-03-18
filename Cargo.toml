@@ -1,6 +1,26 @@
-[package]
-name = "CuTTY"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "cutty",
+    "cutty_terminal",
+    "cutty_config",
+    "cutty_config_derive",
+]
+exclude = [
+    "parley-main",
+    "vello-main",
+    "wezterm-main",
+]
+resolver = "2"
 
-[dependencies]
+[workspace.package]
+edition = "2024"
+rust-version = "1.85.0"
+
+[profile.release]
+lto = "thin"
+debug = 1
+incremental = false
+
+[workspace.dependencies]
+toml = "0.9.11"
+toml_edit = "0.24.0"

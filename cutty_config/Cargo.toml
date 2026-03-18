@@ -1,0 +1,17 @@
+[package]
+name = "cutty_config"
+version = "0.2.4-dev"
+authors = ["Christian Duerr <contact@christianduerr.com>"]
+license = "MIT OR Apache-2.0"
+description = "CuTTY configuration abstractions"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+log = { version = "0.4.17", features = ["serde"] }
+serde = "1.0.163"
+toml.workspace = true
+
+[dev-dependencies]
+cutty_config_derive = { version = "0.2.6-dev", path = "../cutty_config_derive" }
+serde = { version = "1.0.163", features = ["derive"] }

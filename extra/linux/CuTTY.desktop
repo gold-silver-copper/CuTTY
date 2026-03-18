@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+TryExec=cutty
+Exec=cutty
+Icon=CuTTY
+Terminal=false
+Categories=System;TerminalEmulator;
+
+Name=CuTTY
+GenericName=Terminal
+Comment=CuTTY, the Copper Teletype
+StartupNotify=true
+StartupWMClass=CuTTY
+Actions=New;
+
+[Desktop Action New]
+Name=New Terminal
+Exec=cutty

@@ -1,7 +1,3 @@
-/target
-/cutty/target
+target
 /vello-main
 /parley-main
-cutty/.DS_Store
-.DS_Store
-/wezterm-main

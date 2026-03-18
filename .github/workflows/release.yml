@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install scdoc
+      - name: Install ARM target
+        run: rustup update && rustup target add aarch64-apple-darwin && rustup target add x86_64-apple-darwin
+      - name: Test
+        run: cargo test --release --target=x86_64-apple-darwin
+      - name: Build ARM
+        run: cargo build --release --target=aarch64-apple-darwin
+      - name: Make DMG
+        run: make dmg-universal
+      - name: Upload Application
+        run: |
+          mv ./target/release/osx/CuTTY.dmg ./CuTTY-${GITHUB_REF##*/}.dmg
+          ./.github/workflows/upload_asset.sh ./CuTTY-${GITHUB_REF##*/}.dmg $GITHUB_TOKEN
+
+  windows:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: cargo test --release
+      - name: Build
+        run: cargo build --release
+      - name: Upload portable executable
+        run: |
+          cp ./target/release/cutty.exe ./CuTTY-${GITHUB_REF##*/}-portable.exe
+          ./.github/workflows/upload_asset.sh \
+            ./CuTTY-${GITHUB_REF##*/}-portable.exe $GITHUB_TOKEN
+      - name: Install WiX
+        run: dotnet tool install --global wix --version 4.0.5
+      - name: Create msi installer
+        run: |
+          wix extension add WixToolset.UI.wixext/4.0.5 WixToolset.Util.wixext/4.0.5
+          wix build -arch "x64" -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext \
+          -out "./CuTTY-${GITHUB_REF##*/}-installer.msi" "cutty/windows/wix/cutty.wxs"
+      - name: Upload msi installer
+        run: |
+          ./.github/workflows/upload_asset.sh \
+            ./CuTTY-${GITHUB_REF##*/}-installer.msi $GITHUB_TOKEN
+
+  linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev python3 scdoc
+      - name: Test
+        run: cargo test --release
+      - name: Generate manpages
+        run: |
+          scdoc < extra/man/cutty.1.scd | gzip -c > "./cutty.1.gz"
+          scdoc < extra/man/cutty-msg.1.scd | gzip -c > "./cutty-msg.1.gz"
+          scdoc < extra/man/cutty.5.scd | gzip -c > "./cutty.5.gz"
+          scdoc < extra/man/cutty-bindings.5.scd | gzip -c > "./cutty-bindings.5.gz"
+          scdoc < extra/man/cutty-escapes.7.scd | gzip -c > "./cutty-escapes.7.gz"
+      - name: Upload Assets
+        run: |
+          cp ./extra/logo/cutty-term.svg ./CuTTY.svg
+          ./.github/workflows/upload_asset.sh ./CuTTY.svg $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./cutty.1.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./cutty-msg.1.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./cutty.5.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./cutty-bindings.5.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./cutty-escapes.7.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./extra/completions/cutty.bash $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./extra/completions/cutty.fish $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./extra/completions/_cutty $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./extra/linux/CuTTY.desktop $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./extra/cutty.info $GITHUB_TOKEN

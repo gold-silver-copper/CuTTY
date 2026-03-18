@@ -1,0 +1,34 @@
+image: freebsd/latest
+
+packages:
+  - devel/cmake
+  - devel/pkgconf
+  - lang/python3
+  - print/freetype2
+  - x11-fonts/fontconfig
+  - x11-fonts/dejavu
+  - x11/libxcb
+  - x11/libxkbcommon
+
+environment:
+  PATH: /home/build/.cargo/bin:/bin:/usr/bin:/usr/local/bin
+
+tasks:
+  - rustup: |
+      curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable --profile minimal
+  - test: |
+      cargo test
+  - oldstable: |
+      oldstable=$(cat Cargo.toml | grep "rust-version" | sed 's/.*"\(.*\)".*/\1/')
+      rustup toolchain install --profile minimal $oldstable
+      rustup default $oldstable
+      cargo test
+  - clippy: |
+      rustup component add clippy
+      cargo clippy --all-targets
+  - feature-wayland: |
+      cd cutty
+      RUSTFLAGS="-D warnings" cargo test --no-default-features --features=wayland
+  - feature-x11: |
+      cd cutty
+      RUSTFLAGS="-D warnings" cargo test --no-default-features --features=x11
