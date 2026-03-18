@@ -380,7 +380,7 @@ impl Window {
 
     /// Inform windowing system about presenting to the window.
     ///
-    /// Should be called right before presenting to the window with e.g. `eglSwapBuffers`.
+    /// Should be called right before presenting the rendered frame to the window surface.
     pub fn pre_present_notify(&self) {
         self.window.pre_present_notify();
     }

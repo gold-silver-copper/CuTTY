@@ -283,14 +283,6 @@ macOS:     { family = _"Menlo"_,     style = _"Regular"_ }
 	the default being at the bottom. Increasing _x_ moves the glyph to the
 	right, increasing _y_ moves the glyph upward.
 
-*builtin_box_drawing* = _true_ | _false_
-
-	When _true_, Alacritty will use a custom built-in font for box drawing
-	characters (Unicode points _U+2500_ - _U+259F_), legacy computing symbols
-	(_U+1FB00_ - _U+1FB3B_), and powerline symbols (_U+E0B0_ - _U+E0B3_).
-
-	Default: _true_
-
 # COLORS
 
 This section documents the *[colors]* table of the configuration file.
@@ -1035,14 +1027,7 @@ relied upon.
 	Example:
 		_ALACRITTY_EXTRA_LOG_TARGETS="winit;vte" alacritty -vvv_
 
-*renderer* = _"glsl3"_ | _"gles2"_ | _"gles2pure"_ | _"None"_
-
-	Force use of a specific renderer, _"None"_ will use the highest available
-	one.
-
-	Default: _"None"_
-
-*print_events* = _true_ | _false_
+	*print_events* = _true_ | _false_
 
 	Log all received window events.
 
@@ -1051,13 +1036,6 @@ relied upon.
 *highlight_damage* = _true_ | _false_
 
 	Highlight window damage information.
-
-	Default: _false_
-
-*prefer_egl* = _true_ | _false_
-
-	Use EGL as display API if the current platform allows it. Note that
-	transparency may not work with EGL on Linux/BSD.
 
 	Default: _false_
 

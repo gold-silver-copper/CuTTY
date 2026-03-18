@@ -54,7 +54,6 @@ const ALLOWED_TARGETS: &[&str] = &[
     "alacritty_config_derive",
     "alacritty_terminal",
     "alacritty",
-    "crossfont",
 ];
 
 /// Initialize the logger to its defaults.

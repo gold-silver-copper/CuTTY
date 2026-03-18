@@ -2,10 +2,10 @@
     <img width="200" alt="Alacritty Logo" src="https://raw.githubusercontent.com/alacritty/alacritty/master/extra/logo/compat/alacritty-term%2Bscanlines.png">
 </p>
 
-<h1 align="center">Alacritty - A fast, cross-platform, OpenGL terminal emulator</h1>
+<h1 align="center">Alacritty - A fast, cross-platform GPU terminal emulator</h1>
 
 <p align="center">
-  <img alt="Alacritty - A fast, cross-platform, OpenGL terminal emulator"
+  <img alt="Alacritty - A fast, cross-platform GPU terminal emulator"
        src="https://raw.githubusercontent.com/alacritty/alacritty/master/extra/promo/alacritty-readme.png">
 </p>
 
@@ -50,7 +50,7 @@ For everyone else, the detailed instructions to install Alacritty can be found
 
 ### Requirements
 
-- At least OpenGL ES 2.0
+- A graphics adapter and driver supported by `wgpu`
 - [Windows] ConPTY support (Windows 10 version 1809 or higher)
 
 ## Configuration

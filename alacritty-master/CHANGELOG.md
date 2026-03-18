@@ -33,7 +33,6 @@ Notable changes to the `alacritty_terminal` crate are documented in its
 
 - Brief error popup when saving the config file with some editors
 - Subprocesses on OpenBSD now run with their CWD set to that of the shell's foreground process.
-- Crash when OpenGL context resets
 - Crash when committing text with some IMEs on macOS
 - Signal termination skipping resource cleanup
 
@@ -65,7 +64,6 @@ Notable changes to the `alacritty_terminal` crate are documented in its
 
 ### Fixed
 
-- Crash when OpenGL context resets
 - Modifier keys clearing selection with kitty keyboard protocol enabled
 - `glyph_offset.y` not applied to strikeout
 - `Enter`,`Tab`, `Backspace` not disambiguated with `shift` in kitty keyboard's disambiguate mode
@@ -235,7 +233,6 @@ Notable changes to the `alacritty_terminal` crate are documented in its
 - Copy global IPC options (`-w -1`) for new windows
 - Bindings to create and navigate tabs on macOS
 - Support startup notify protocol to raise initial window on Wayland/X11
-- Debug option `prefer_egl` to prioritize EGL over other display APIs
 - Inline vi-mode search using `f`/`F`/`t`/`T`
 - `window.blur` config option to request blur for transparent windows
 - `--option` argument for `alacritty msg create-window`
@@ -334,7 +331,6 @@ Notable changes to the `alacritty_terminal` crate are documented in its
 - Uppercase `-T` short form for `--title`
 - Support for horizontal scrolling in mouse mode and alternative scrolling modes
 - Support for fractional scaling on Wayland with wp-fractional-scale protocol
-- Support for running on GLES context
 - Touchscreen input for click/scroll/select/zoom
 - `window.resize_increments` config option, disabled by default
 
@@ -397,7 +393,6 @@ Notable changes to the `alacritty_terminal` crate are documented in its
 - Track and report surface damage information to Wayland compositors
 - Escape sequence for undercurl, dotted and dashed underlines (`CSI 4 : [3-5] m`)
 - `ToggleMaximized` key binding action to (un-)maximize the active window, not bound by default
-- Support for OpenGL ES 2.0
 - Escape sequence to set underline color (`CSI 58 : 2 : Ps : Ps : Ps m`/`CSI 58 : 5 : Ps m`)
 - Escape sequence to reset underline color (`CSI 59 m`)
 - Vi mode keybinding (z) to center view around vi mode cursor
@@ -441,7 +436,6 @@ Notable changes to the `alacritty_terminal` crate are documented in its
 - Window flickering on resize on Wayland
 - Unnecessary config reload when using `/dev/null` as a config file
 - Windows `Open Alacritty Here` on root of drive displaying error
-- On macOS, `font.use_thin_strokes` did not work since Big Sur
 - On macOS, trying to load a disabled font would crash
 - On macOS, Alacritty sessions did not appear in the list of tty sessions for `w` and `who`
 - Cursor not hiding on GNOME Wayland
@@ -452,16 +446,7 @@ Notable changes to the `alacritty_terminal` crate are documented in its
 - First window on macOS not tabbed with system prefer tabs setting
 - Window being treated as focused by default on Wayland
 
-### Removed
-
-- `font.use_thin_strokes` config field; to use thin strokes on macOS, set
-    `AppleFontSmoothing` to 0 with `$ defaults write -g AppleFontSmoothing -int 0`
-
 ## 0.10.1
-
-### Added
-
-- Option `font.builtin_box_drawing` to disable the built-in font for drawing box characters
 
 ### Changed
 

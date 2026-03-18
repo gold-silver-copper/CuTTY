@@ -13,7 +13,7 @@
   <project_license>Apache-2.0</project_license>
   <metadata_license>MIT</metadata_license>
 
-  <summary>A cross-platform, OpenGL terminal emulator</summary>
+  <summary>A cross-platform GPU terminal emulator</summary>
   <description>
     <p>
       Alacritty is a modern terminal emulator that comes with sensible defaults,

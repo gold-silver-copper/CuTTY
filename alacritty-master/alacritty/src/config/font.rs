@@ -21,9 +21,6 @@ pub struct Font {
     /// Glyph offset within character cell.
     pub glyph_offset: Delta<i8>,
 
-    #[config(removed = "set the AppleFontSmoothing user default instead")]
-    pub use_thin_strokes: bool,
-
     /// Normal font face.
     normal: FontDescription,
 
@@ -38,9 +35,6 @@ pub struct Font {
 
     /// Font size in points.
     size: Size,
-
-    /// Whether to use the built-in font for box drawing characters.
-    pub builtin_box_drawing: bool,
 }
 
 impl Font {
@@ -78,9 +72,7 @@ impl Font {
 impl Default for Font {
     fn default() -> Font {
         Self {
-            builtin_box_drawing: true,
             glyph_offset: Default::default(),
-            use_thin_strokes: Default::default(),
             bold_italic: Default::default(),
             italic: Default::default(),
             offset: Default::default(),
