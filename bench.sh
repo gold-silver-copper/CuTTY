@@ -16,6 +16,9 @@ logs, generates winner reports, and prints both reports at the end.
 
 Options:
   --vtebench-dir PATH   Path to a local alacritty/vtebench checkout.
+  --terminals LIST      Comma-separated terminals to test.
+                        Supported: cutty,alacritty,kitty,ghostty
+                        Default: all terminals
   --cutty-bin PATH      Path to the CuTTY binary.
   --alacritty-bin PATH  Path to the Alacritty binary.
   --kitty-bin PATH      Path to the Kitty terminal binary.
@@ -39,6 +42,7 @@ status() {
 }
 
 VTEBENCH_DIR=""
+TERMINALS=""
 CUTTY_BIN=""
 ALACRITTY_BIN=""
 KITTY_BIN=""
@@ -52,6 +56,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --vtebench-dir)
             VTEBENCH_DIR="$2"
+            shift 2
+            ;;
+        --terminals)
+            TERMINALS="$2"
             shift 2
             ;;
         --cutty-bin)
@@ -114,6 +122,11 @@ vtebench_cmd=(
     --results-dir "${VTEBENCH_RESULTS_DIR}"
     --timeout-seconds "${TIMEOUT_SECONDS}"
 )
+
+if [[ -n "${TERMINALS}" ]]; then
+    kitten_cmd+=(--terminals "${TERMINALS}")
+    vtebench_cmd+=(--terminals "${TERMINALS}")
+fi
 
 if [[ -n "${CUTTY_BIN}" ]]; then
     kitten_cmd+=(--cutty-bin "${CUTTY_BIN}")

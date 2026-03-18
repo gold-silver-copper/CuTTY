@@ -1,3 +1,4 @@
+use std::array;
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -56,12 +57,14 @@ pub struct TextSystem {
     font_cx: FontContext,
     layout_cx: LayoutContext<Brush>,
     metrics: TextMetrics,
+    family_stacks: [Arc<[FontFamily<'static>]>; 4],
     cache: AHashMap<LayoutKey, Arc<Layout<Brush>>>,
 }
 
 impl TextSystem {
     pub fn new(font: Font) -> Self {
         let mut text_system = Self {
+            family_stacks: family_stacks_for_font(&font),
             font,
             font_cx: FontContext::default(),
             layout_cx: LayoutContext::default(),
@@ -78,6 +81,7 @@ impl TextSystem {
 
     pub fn update_font(&mut self, font: Font) {
         self.font = font;
+        self.family_stacks = family_stacks_for_font(&self.font);
         self.metrics = self.measure_metrics();
         self.cache.clear();
     }
@@ -120,8 +124,8 @@ impl TextSystem {
             (false, true) => FontVariant::Italic,
             (false, false) => FontVariant::Normal,
         };
-        if text.chars().count() == 1 {
-            Some(self.shape_char(text.chars().next().unwrap(), variant, fg))
+        if let Some(character) = single_char(&text) {
+            Some(self.shape_char(character, variant, fg))
         } else {
             Some(self.shape_text(text, variant, fg))
         }
@@ -164,11 +168,11 @@ impl TextSystem {
         variant: FontVariant,
         fg: Rgb,
     ) -> Arc<Layout<Brush>> {
-        let family = self.font_family(variant);
+        let family = Arc::clone(&self.family_stacks[variant.as_index()]);
         let (font_style, font_weight) = font_style(variant);
 
         let mut builder = self.layout_cx.ranged_builder(&mut self.font_cx, text, 1.0, true);
-        builder.push_default(family);
+        builder.push_default(FontStack::from(&family[..]));
         builder.push_default(StyleProperty::FontSize(self.font.size().as_px()));
         builder.push_default(StyleProperty::FontStyle(font_style));
         builder.push_default(StyleProperty::FontWeight(font_weight));
@@ -186,10 +190,10 @@ impl TextSystem {
 
     fn measure_metrics(&mut self) -> TextMetrics {
         let sample = "M";
-        let family = self.font_family(FontVariant::Normal);
+        let family = Arc::clone(&self.family_stacks[FontVariant::Normal.as_index()]);
         let font_size = self.font.size().as_px();
         let mut builder = self.layout_cx.ranged_builder(&mut self.font_cx, sample, 1.0, true);
-        builder.push_default(family);
+        builder.push_default(FontStack::from(&family[..]));
         builder.push_default(StyleProperty::FontSize(font_size));
         builder.push_default(StyleProperty::Brush(Brush::Solid(Color::WHITE)));
 
@@ -222,14 +226,27 @@ impl TextSystem {
         }
     }
 
-    fn font_family(&self, variant: FontVariant) -> FontStack<'static> {
-        FontStack::List(Cow::Owned(font_family_stack(&self.font, variant)))
-    }
-
     #[cfg(test)]
     fn cache_len(&self) -> usize {
         self.cache.len()
     }
+}
+
+impl FontVariant {
+    const fn as_index(self) -> usize {
+        match self {
+            Self::Normal => 0,
+            Self::Bold => 1,
+            Self::Italic => 2,
+            Self::BoldItalic => 3,
+        }
+    }
+}
+
+fn single_char(text: &str) -> Option<char> {
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    chars.next().is_none().then_some(first)
 }
 
 fn font_variant(flags: Flags) -> FontVariant {
@@ -252,6 +269,19 @@ fn font_style(variant: FontVariant) -> (ParleyFontStyle, FontWeight) {
 
 pub fn color_from_rgb(color: Rgb) -> Color {
     Color::from_rgb8(color.r, color.g, color.b)
+}
+
+fn family_stacks_for_font(font: &Font) -> [Arc<[FontFamily<'static>]>; 4] {
+    array::from_fn(|index| {
+        let variant = match index {
+            0 => FontVariant::Normal,
+            1 => FontVariant::Bold,
+            2 => FontVariant::Italic,
+            3 => FontVariant::BoldItalic,
+            _ => unreachable!("font variant index out of range"),
+        };
+        Arc::from(font_family_stack(font, variant))
+    })
 }
 
 fn font_family_stack(font: &Font, variant: FontVariant) -> Vec<FontFamily<'static>> {

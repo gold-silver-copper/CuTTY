@@ -7,6 +7,53 @@ benchmark_fail() {
     exit 1
 }
 
+benchmark_all_terminals() {
+    printf '%s\n' cutty alacritty kitty ghostty
+}
+
+benchmark_terminal_display_name() {
+    case "$1" in
+        cutty) printf '%s\n' "CuTTY" ;;
+        alacritty) printf '%s\n' "Alacritty" ;;
+        kitty) printf '%s\n' "Kitty" ;;
+        ghostty) printf '%s\n' "Ghostty" ;;
+        *)
+            benchmark_fail "unknown terminal: $1"
+            ;;
+    esac
+}
+
+benchmark_parse_terminals() {
+    local raw="${1:-}"
+    if [[ -z "${raw}" ]]; then
+        benchmark_all_terminals
+        return 0
+    fi
+
+    local normalized="${raw// /}"
+    local IFS=','
+    read -r -a requested <<< "${normalized}"
+    local seen=","
+    local terminal
+    for terminal in "${requested[@]}"; do
+        case "${terminal}" in
+            cutty|alacritty|kitty|ghostty) ;;
+            "")
+                benchmark_fail "empty terminal name in --terminals"
+                ;;
+            *)
+                benchmark_fail "unsupported terminal in --terminals: ${terminal}"
+                ;;
+        esac
+
+        if [[ "${seen}" == *",${terminal},"* ]]; then
+            benchmark_fail "duplicate terminal in --terminals: ${terminal}"
+        fi
+        seen+="${terminal},"
+        printf '%s\n' "${terminal}"
+    done
+}
+
 benchmark_status() {
     echo "[$(date +"%Y-%m-%d %H:%M:%S")] $*"
 }

@@ -24,6 +24,9 @@ benchmark inside each terminal, save the logs, and compile a report with a
 winner for every benchmark category.
 
 Options:
+  --terminals LIST      Comma-separated terminals to test.
+                        Supported: cutty,alacritty,kitty,ghostty
+                        Default: all terminals
   --cutty-bin PATH      Path to the CuTTY binary.
   --alacritty-bin PATH  Path to the Alacritty binary.
   --kitty-bin PATH      Path to the Kitty terminal binary.
@@ -37,17 +40,51 @@ Options:
 EOF
 }
 
+resolve_terminal_binary() {
+    local terminal="$1"
+    case "${terminal}" in
+        cutty)
+            if [[ -n "${CUTTY_BIN}" ]]; then
+                benchmark_resolve_binary "${CUTTY_BIN}" "" ""
+            elif [[ -x "${DEFAULT_CUTTY_BIN}" ]]; then
+                printf '%s\n' "${DEFAULT_CUTTY_BIN}"
+            elif [[ -x "${DEFAULT_CUTTY_DEBUG_BIN}" ]]; then
+                printf '%s\n' "${DEFAULT_CUTTY_DEBUG_BIN}"
+            else
+                benchmark_fail "unable to find a CuTTY binary; tried ${DEFAULT_CUTTY_BIN} and ${DEFAULT_CUTTY_DEBUG_BIN}"
+            fi
+            ;;
+        alacritty)
+            benchmark_resolve_binary "${ALACRITTY_BIN}" "${DEFAULT_ALACRITTY_APP}" "alacritty"
+            ;;
+        kitty)
+            benchmark_resolve_binary "${KITTY_BIN}" "${DEFAULT_KITTY_APP}" "kitty"
+            ;;
+        ghostty)
+            benchmark_resolve_binary "${GHOSTTY_BIN}" "${DEFAULT_GHOSTTY_APP}" "ghostty"
+            ;;
+        *)
+            benchmark_fail "unsupported terminal kind: ${terminal}"
+            ;;
+    esac
+}
+
 CUTTY_BIN=""
 ALACRITTY_BIN=""
 KITTY_BIN=""
 GHOSTTY_BIN=""
 KITTEN_BIN=""
+TERMINALS=""
 RESULTS_DIR="${DEFAULT_RESULTS_DIR}"
 RENDER_FLAG=0
 TIMEOUT_SECONDS="${DEFAULT_TIMEOUT}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --terminals)
+            TERMINALS="$2"
+            shift 2
+            ;;
         --cutty-bin)
             CUTTY_BIN="$2"
             shift 2
@@ -92,18 +129,6 @@ done
 
 mkdir -p "${RESULTS_DIR}"
 
-if [[ -n "${CUTTY_BIN}" ]]; then
-    CUTTY_BIN="$(benchmark_resolve_binary "${CUTTY_BIN}" "" "")"
-elif [[ -x "${DEFAULT_CUTTY_BIN}" ]]; then
-    CUTTY_BIN="${DEFAULT_CUTTY_BIN}"
-elif [[ -x "${DEFAULT_CUTTY_DEBUG_BIN}" ]]; then
-    CUTTY_BIN="${DEFAULT_CUTTY_DEBUG_BIN}"
-else
-    benchmark_fail "unable to find a CuTTY binary; tried ${DEFAULT_CUTTY_BIN} and ${DEFAULT_CUTTY_DEBUG_BIN}"
-fi
-ALACRITTY_BIN="$(benchmark_resolve_binary "${ALACRITTY_BIN}" "${DEFAULT_ALACRITTY_APP}" "alacritty")"
-KITTY_BIN="$(benchmark_resolve_binary "${KITTY_BIN}" "${DEFAULT_KITTY_APP}" "kitty")"
-GHOSTTY_BIN="$(benchmark_resolve_binary "${GHOSTTY_BIN}" "${DEFAULT_GHOSTTY_APP}" "ghostty")"
 KITTEN_BIN="$(benchmark_resolve_binary "${KITTEN_BIN}" "${DEFAULT_KITTEN_APP}" "kitten")"
 PYTHON_BIN="$(benchmark_resolve_binary "" "" "python3")"
 
@@ -114,15 +139,13 @@ if (( RENDER_FLAG )); then
     LOG_SUFFIX="-render"
 fi
 
-terminal_specs=(
-    "cutty|CuTTY|cutty|${CUTTY_BIN}"
-    "alacritty|Alacritty|alacritty|${ALACRITTY_BIN}"
-    "kitty|Kitty|kitty|${KITTY_BIN}"
-    "ghostty|Ghostty|ghostty|${GHOSTTY_BIN}"
-)
+mapfile -t SELECTED_TERMINALS < <(benchmark_parse_terminals "${TERMINALS}")
+terminal_logs=()
 
-for spec in "${terminal_specs[@]}"; do
-    IFS="|" read -r label display_name terminal_kind terminal_bin <<< "${spec}"
+for terminal_kind in "${SELECTED_TERMINALS[@]}"; do
+    label="${terminal_kind}"
+    display_name="$(benchmark_terminal_display_name "${terminal_kind}")"
+    terminal_bin="$(resolve_terminal_binary "${terminal_kind}")"
     rm -f "${RESULTS_DIR}/${label}.done" "${RESULTS_DIR}/${label}.status"
 
     child_args=(
@@ -140,21 +163,19 @@ for spec in "${terminal_specs[@]}"; do
     benchmark_status "Waiting for ${display_name} kitty benchmark run to finish"
     benchmark_wait_for_markers "${RESULTS_DIR}" "${TIMEOUT_SECONDS}" "${label}"
     benchmark_check_status_files "${RESULTS_DIR}" "${label}"
+    terminal_logs+=("--terminal-log" "${display_name}=${RESULTS_DIR}/${label}${LOG_SUFFIX}.log")
 done
 
 REPORT_FILE="${RESULTS_DIR}/report${LOG_SUFFIX}.md"
 benchmark_status "Generating kitty benchmark report"
 "${PYTHON_BIN}" "${REPORT_SCRIPT}" \
     kitten \
-    --terminal-log "CuTTY=${RESULTS_DIR}/cutty${LOG_SUFFIX}.log" \
-    --terminal-log "Alacritty=${RESULTS_DIR}/alacritty${LOG_SUFFIX}.log" \
-    --terminal-log "Kitty=${RESULTS_DIR}/kitty${LOG_SUFFIX}.log" \
-    --terminal-log "Ghostty=${RESULTS_DIR}/ghostty${LOG_SUFFIX}.log" \
+    "${terminal_logs[@]}" \
     --output "${REPORT_FILE}"
 
 echo
-echo "Saved CuTTY log: ${RESULTS_DIR}/cutty${LOG_SUFFIX}.log"
-echo "Saved Alacritty log: ${RESULTS_DIR}/alacritty${LOG_SUFFIX}.log"
-echo "Saved Kitty log: ${RESULTS_DIR}/kitty${LOG_SUFFIX}.log"
-echo "Saved Ghostty log: ${RESULTS_DIR}/ghostty${LOG_SUFFIX}.log"
+for terminal_kind in "${SELECTED_TERMINALS[@]}"; do
+    display_name="$(benchmark_terminal_display_name "${terminal_kind}")"
+    echo "Saved ${display_name} log: ${RESULTS_DIR}/${terminal_kind}${LOG_SUFFIX}.log"
+done
 echo "Saved report: ${REPORT_FILE}"

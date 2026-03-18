@@ -23,6 +23,9 @@ save the logs, and compile a report with a winner for every benchmark category.
 
 Options:
   --vtebench-dir PATH   Path to a local alacritty/vtebench checkout.
+  --terminals LIST      Comma-separated terminals to test.
+                        Supported: cutty,alacritty,kitty,ghostty
+                        Default: all terminals
   --cutty-bin PATH      Path to the CuTTY binary.
   --alacritty-bin PATH  Path to the Alacritty binary.
   --kitty-bin PATH      Path to the Kitty terminal binary.
@@ -34,11 +37,41 @@ Options:
 EOF
 }
 
+resolve_terminal_binary() {
+    local terminal="$1"
+    case "${terminal}" in
+        cutty)
+            if [[ -n "${CUTTY_BIN}" ]]; then
+                benchmark_resolve_binary "${CUTTY_BIN}" "" ""
+            elif [[ -x "${DEFAULT_CUTTY_BIN}" ]]; then
+                printf '%s\n' "${DEFAULT_CUTTY_BIN}"
+            elif [[ -x "${DEFAULT_CUTTY_DEBUG_BIN}" ]]; then
+                printf '%s\n' "${DEFAULT_CUTTY_DEBUG_BIN}"
+            else
+                benchmark_fail "unable to find a CuTTY binary; tried ${DEFAULT_CUTTY_BIN} and ${DEFAULT_CUTTY_DEBUG_BIN}"
+            fi
+            ;;
+        alacritty)
+            benchmark_resolve_binary "${ALACRITTY_BIN}" "${DEFAULT_ALACRITTY_APP}" "alacritty"
+            ;;
+        kitty)
+            benchmark_resolve_binary "${KITTY_BIN}" "${DEFAULT_KITTY_APP}" "kitty"
+            ;;
+        ghostty)
+            benchmark_resolve_binary "${GHOSTTY_BIN}" "${DEFAULT_GHOSTTY_APP}" "ghostty"
+            ;;
+        *)
+            benchmark_fail "unsupported terminal kind: ${terminal}"
+            ;;
+    esac
+}
+
 VTEBENCH_DIR=""
 CUTTY_BIN=""
 ALACRITTY_BIN=""
 KITTY_BIN=""
 GHOSTTY_BIN=""
+TERMINALS=""
 RESULTS_DIR="${DEFAULT_RESULTS_ROOT}"
 TIMEOUT_SECONDS="${DEFAULT_TIMEOUT}"
 
@@ -46,6 +79,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --vtebench-dir)
             VTEBENCH_DIR="$2"
+            shift 2
+            ;;
+        --terminals)
+            TERMINALS="$2"
             shift 2
             ;;
         --cutty-bin)
@@ -89,31 +126,17 @@ benchmark_require_dir "${VTEBENCH_DIR}/benchmarks" "vtebench benchmarks director
 
 mkdir -p "${RESULTS_DIR}"
 
-if [[ -n "${CUTTY_BIN}" ]]; then
-    CUTTY_BIN="$(benchmark_resolve_binary "${CUTTY_BIN}" "" "")"
-elif [[ -x "${DEFAULT_CUTTY_BIN}" ]]; then
-    CUTTY_BIN="${DEFAULT_CUTTY_BIN}"
-elif [[ -x "${DEFAULT_CUTTY_DEBUG_BIN}" ]]; then
-    CUTTY_BIN="${DEFAULT_CUTTY_DEBUG_BIN}"
-else
-    benchmark_fail "unable to find a CuTTY binary; tried ${DEFAULT_CUTTY_BIN} and ${DEFAULT_CUTTY_DEBUG_BIN}"
-fi
-ALACRITTY_BIN="$(benchmark_resolve_binary "${ALACRITTY_BIN}" "${DEFAULT_ALACRITTY_APP}" "alacritty")"
-KITTY_BIN="$(benchmark_resolve_binary "${KITTY_BIN}" "${DEFAULT_KITTY_APP}" "kitty")"
-GHOSTTY_BIN="$(benchmark_resolve_binary "${GHOSTTY_BIN}" "${DEFAULT_GHOSTTY_APP}" "ghostty")"
 PYTHON_BIN="$(benchmark_resolve_binary "" "" "python3")"
 
 CHILD_SCRIPT="${SCRIPT_DIR}/benchmark_child.sh"
 REPORT_SCRIPT="${SCRIPT_DIR}/benchmark_report.py"
-terminal_specs=(
-    "cutty|CuTTY|cutty|${CUTTY_BIN}"
-    "alacritty|Alacritty|alacritty|${ALACRITTY_BIN}"
-    "kitty|Kitty|kitty|${KITTY_BIN}"
-    "ghostty|Ghostty|ghostty|${GHOSTTY_BIN}"
-)
+mapfile -t SELECTED_TERMINALS < <(benchmark_parse_terminals "${TERMINALS}")
+terminal_dats=()
 
-for spec in "${terminal_specs[@]}"; do
-    IFS="|" read -r label display_name terminal_kind terminal_bin <<< "${spec}"
+for terminal_kind in "${SELECTED_TERMINALS[@]}"; do
+    label="${terminal_kind}"
+    display_name="$(benchmark_terminal_display_name "${terminal_kind}")"
+    terminal_bin="$(resolve_terminal_binary "${terminal_kind}")"
     rm -f "${RESULTS_DIR}/${label}.done" "${RESULTS_DIR}/${label}.status"
 
     child_args=(
@@ -128,10 +151,11 @@ for spec in "${terminal_specs[@]}"; do
     benchmark_status "Waiting for ${display_name} vtebench run to finish"
     benchmark_wait_for_markers "${RESULTS_DIR}" "${TIMEOUT_SECONDS}" "${label}"
     benchmark_check_status_files "${RESULTS_DIR}" "${label}"
+    terminal_dats+=("--terminal-dat" "${display_name}=${RESULTS_DIR}/${label}.dat")
 done
 
 PLOT_FILE="${RESULTS_DIR}/comparison.svg"
-if [[ -x "${VTEBENCH_DIR}/gnuplot/summary.sh" ]]; then
+if [[ ${#SELECTED_TERMINALS[@]} -eq 4 && -x "${VTEBENCH_DIR}/gnuplot/summary.sh" ]]; then
     benchmark_status "Generating vtebench plot"
     "${VTEBENCH_DIR}/gnuplot/summary.sh" \
         "${RESULTS_DIR}/cutty.dat" \
@@ -145,21 +169,15 @@ REPORT_FILE="${RESULTS_DIR}/report.md"
 benchmark_status "Generating vtebench report"
 "${PYTHON_BIN}" "${REPORT_SCRIPT}" \
     vtebench \
-    --terminal-dat "CuTTY=${RESULTS_DIR}/cutty.dat" \
-    --terminal-dat "Alacritty=${RESULTS_DIR}/alacritty.dat" \
-    --terminal-dat "Kitty=${RESULTS_DIR}/kitty.dat" \
-    --terminal-dat "Ghostty=${RESULTS_DIR}/ghostty.dat" \
+    "${terminal_dats[@]}" \
     --output "${REPORT_FILE}"
 
 echo
-echo "Saved CuTTY log: ${RESULTS_DIR}/cutty.log"
-echo "Saved Alacritty log: ${RESULTS_DIR}/alacritty.log"
-echo "Saved Kitty log: ${RESULTS_DIR}/kitty.log"
-echo "Saved Ghostty log: ${RESULTS_DIR}/ghostty.log"
-echo "Saved CuTTY dat: ${RESULTS_DIR}/cutty.dat"
-echo "Saved Alacritty dat: ${RESULTS_DIR}/alacritty.dat"
-echo "Saved Kitty dat: ${RESULTS_DIR}/kitty.dat"
-echo "Saved Ghostty dat: ${RESULTS_DIR}/ghostty.dat"
+for terminal_kind in "${SELECTED_TERMINALS[@]}"; do
+    display_name="$(benchmark_terminal_display_name "${terminal_kind}")"
+    echo "Saved ${display_name} log: ${RESULTS_DIR}/${terminal_kind}.log"
+    echo "Saved ${display_name} dat: ${RESULTS_DIR}/${terminal_kind}.dat"
+done
 if [[ -f "${PLOT_FILE}" ]]; then
     echo "Saved comparison plot: ${PLOT_FILE}"
 fi
