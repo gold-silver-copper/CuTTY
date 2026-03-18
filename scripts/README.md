@@ -15,26 +15,23 @@ Running this script depends on an installation of `perf`.
 
 ## vtebench Comparison
 
-Run the helper script once inside CuTTY and once inside Alacritty. It executes
-`vtebench` in the current terminal, writes a labeled `.log` and `.dat`, and
-generates a comparison plot automatically once both `cutty` and `alacritty`
-results exist.
+This launcher opens both CuTTY and Alacritty, runs `vtebench` inside each
+terminal, captures the `.log` and `.dat` outputs, and generates a report with
+the winner for every benchmark category.
 
 ```sh
-./compare-vtebench-macos.sh --vtebench-dir /path/to/vtebench --label cutty
-./compare-vtebench-macos.sh --vtebench-dir /path/to/vtebench --label alacritty
+./compare-vtebench-macos.sh --vtebench-dir /path/to/vtebench
 ```
 
 ## Kitty Throughput Benchmark
 
-Kitty's official throughput benchmark is run with `kitten __benchmark__` inside
-the terminal being tested. The helper below wraps that command, saves a labeled
-log, and can optionally enable rendering with `--render`.
+This launcher opens both CuTTY and Alacritty, runs kitty's official throughput
+benchmark inside each terminal, captures the logs, and generates a report with
+the winner for every benchmark category.
 
 ```sh
-./run-kitten-benchmark.sh --label cutty
-./run-kitten-benchmark.sh --label alacritty
-./run-kitten-benchmark.sh --label cutty --render
+./run-kitten-benchmark.sh
+./run-kitten-benchmark.sh --render
 ```
 
 ## ANSI Color Tests

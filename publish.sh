@@ -60,6 +60,9 @@ CRATES=(
     cutty
 )
 
+SUCCEEDED=()
+FAILED=()
+
 publish_one() {
     local crate="$1"
     local -a cmd=(cargo publish -p "${crate}")
@@ -74,7 +77,14 @@ publish_one() {
 
     echo
     echo "==> ${cmd[*]}"
-    "${cmd[@]}"
+    if "${cmd[@]}"; then
+        SUCCEEDED+=("${crate}")
+        return 0
+    fi
+
+    FAILED+=("${crate}")
+    echo "Skipping ${crate} after publish failure."
+    return 1
 }
 
 echo "Publishing from ${ROOT_DIR}"
@@ -87,7 +97,7 @@ fi
 
 for i in "${!CRATES[@]}"; do
     crate="${CRATES[$i]}"
-    publish_one "${crate}"
+    publish_one "${crate}" || true
 
     if [[ "${DRY_RUN}" -eq 0 && "$i" -lt $((${#CRATES[@]} - 1)) ]]; then
         next_crate="${CRATES[$((i + 1))]}"
@@ -99,3 +109,5 @@ done
 
 echo
 echo "Done."
+echo "Succeeded: ${SUCCEEDED[*]:-none}"
+echo "Failed: ${FAILED[*]:-none}"

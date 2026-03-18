@@ -4,49 +4,50 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/benchmark_common.sh"
+
 DEFAULT_RESULTS_DIR="${REPO_ROOT}/target/kitten-benchmarks"
+DEFAULT_CUTTY_BIN="${REPO_ROOT}/target/release/cutty"
+DEFAULT_CUTTY_DEBUG_BIN="${REPO_ROOT}/target/debug/cutty"
+DEFAULT_ALACRITTY_APP="/Applications/Alacritty.app/Contents/MacOS/alacritty"
+DEFAULT_KITTEN_APP="/Applications/kitty.app/Contents/MacOS/kitten"
+DEFAULT_TIMEOUT=1800
 
 usage() {
     cat <<'EOF'
-Usage: run-kitten-benchmark.sh --label NAME [options]
+Usage: run-kitten-benchmark.sh [options]
 
-Run kitty's builtin throughput benchmark in the current terminal and save the
-output under a label such as "cutty" or "alacritty".
-
-Examples:
-  ./run-kitten-benchmark.sh --label cutty
-  ./run-kitten-benchmark.sh --label alacritty
-  ./run-kitten-benchmark.sh --label cutty --render
-  ./run-kitten-benchmark.sh --label cutty --kitten-bin /Applications/kitty.app/Contents/MacOS/kitten
+Launch CuTTY and Alacritty, run kitty's builtin throughput benchmark inside
+each terminal, save the logs, and compile a report with a winner for every
+benchmark category.
 
 Options:
-  --label NAME          Result label, usually "cutty" or "alacritty".
-  --kitten-bin PATH     Path to the `kitten` binary. Default: `kitten` from PATH.
-  --results-dir PATH    Directory for benchmark logs.
+  --cutty-bin PATH      Path to the CuTTY binary.
+  --alacritty-bin PATH  Path to the Alacritty binary.
+  --kitten-bin PATH     Path to the `kitten` binary.
+  --results-dir PATH    Directory for benchmark logs and reports.
                         Default: ./target/kitten-benchmarks
   --render              Pass `--render` to `kitten __benchmark__`.
+  --timeout-seconds N   Max time to wait for both benchmarks. Default: 1800.
   -h, --help            Show this help.
 EOF
 }
 
-fail() {
-    echo "error: $*" >&2
-    exit 1
-}
-
-status() {
-    echo "[$(date +"%Y-%m-%d %H:%M:%S")] $*"
-}
-
-LABEL=""
-KITTEN_BIN="kitten"
+CUTTY_BIN=""
+ALACRITTY_BIN=""
+KITTEN_BIN=""
 RESULTS_DIR="${DEFAULT_RESULTS_DIR}"
 RENDER_FLAG=0
+TIMEOUT_SECONDS="${DEFAULT_TIMEOUT}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --label)
-            LABEL="$2"
+        --cutty-bin)
+            CUTTY_BIN="$2"
+            shift 2
+            ;;
+        --alacritty-bin)
+            ALACRITTY_BIN="$2"
             shift 2
             ;;
         --kitten-bin)
@@ -61,58 +62,86 @@ while [[ $# -gt 0 ]]; do
             RENDER_FLAG=1
             shift
             ;;
+        --timeout-seconds)
+            TIMEOUT_SECONDS="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
             ;;
         *)
-            fail "Unknown argument: $1"
+            benchmark_fail "Unknown argument: $1"
             ;;
     esac
 done
 
-[[ -n "${LABEL}" ]] || fail "--label is required"
+mkdir -p "${RESULTS_DIR}"
 
-if [[ "${KITTEN_BIN}" == */* ]]; then
-    [[ -x "${KITTEN_BIN}" ]] || fail "Kitten binary is not executable: ${KITTEN_BIN}"
-elif ! command -v "${KITTEN_BIN}" >/dev/null 2>&1; then
-    fail "Unable to find kitten binary on PATH: ${KITTEN_BIN}"
+if [[ -n "${CUTTY_BIN}" ]]; then
+    CUTTY_BIN="$(benchmark_resolve_binary "${CUTTY_BIN}" "" "")"
+elif [[ -x "${DEFAULT_CUTTY_BIN}" ]]; then
+    CUTTY_BIN="${DEFAULT_CUTTY_BIN}"
+elif [[ -x "${DEFAULT_CUTTY_DEBUG_BIN}" ]]; then
+    CUTTY_BIN="${DEFAULT_CUTTY_DEBUG_BIN}"
+else
+    benchmark_fail "unable to find a CuTTY binary; tried ${DEFAULT_CUTTY_BIN} and ${DEFAULT_CUTTY_DEBUG_BIN}"
+fi
+ALACRITTY_BIN="$(benchmark_resolve_binary "${ALACRITTY_BIN}" "${DEFAULT_ALACRITTY_APP}" "alacritty")"
+KITTEN_BIN="$(benchmark_resolve_binary "${KITTEN_BIN}" "${DEFAULT_KITTEN_APP}" "kitten")"
+PYTHON_BIN="$(benchmark_resolve_binary "" "" "python3")"
+
+rm -f \
+    "${RESULTS_DIR}/cutty.done" "${RESULTS_DIR}/cutty.status" \
+    "${RESULTS_DIR}/alacritty.done" "${RESULTS_DIR}/alacritty.status"
+
+CHILD_SCRIPT="${SCRIPT_DIR}/benchmark_child.sh"
+REPORT_SCRIPT="${SCRIPT_DIR}/benchmark_report.py"
+
+child_args=(
+    --mode kitten
+    --results-dir "${RESULTS_DIR}"
+    --kitten-bin "${KITTEN_BIN}"
+)
+if (( RENDER_FLAG )); then
+    child_args+=(--render)
 fi
 
-mkdir -p "${RESULTS_DIR}"
+benchmark_launch_terminal \
+    "CuTTY" \
+    "${CUTTY_BIN}" \
+    -e bash "${CHILD_SCRIPT}" \
+    "${child_args[@]}" \
+    --label cutty
+
+benchmark_status "Waiting for CuTTY kitty benchmark run to finish"
+benchmark_wait_for_markers "${RESULTS_DIR}" "${TIMEOUT_SECONDS}" cutty
+benchmark_check_status_files "${RESULTS_DIR}" cutty
+
+benchmark_launch_terminal \
+    "Alacritty" \
+    "${ALACRITTY_BIN}" \
+    -e bash "${CHILD_SCRIPT}" \
+    "${child_args[@]}" \
+    --label alacritty
+
+benchmark_status "Waiting for Alacritty kitty benchmark run to finish"
+benchmark_wait_for_markers "${RESULTS_DIR}" "${TIMEOUT_SECONDS}" alacritty
+benchmark_check_status_files "${RESULTS_DIR}" alacritty
 
 LOG_SUFFIX=""
 if (( RENDER_FLAG )); then
     LOG_SUFFIX="-render"
 fi
-LOG_FILE="${RESULTS_DIR}/${LABEL}${LOG_SUFFIX}.log"
 
-status "Running kitty throughput benchmark in the current terminal"
-status "label: ${LABEL}"
-status "kitten: ${KITTEN_BIN}"
-status "results: ${RESULTS_DIR}"
-status "log: ${LOG_FILE}"
-if (( RENDER_FLAG )); then
-    status "mode: render enabled"
-else
-    status "mode: parser-focused (default, rendering suppressed)"
-fi
-echo
-
-benchmark_cmd=("${KITTEN_BIN}" "__benchmark__")
-if (( RENDER_FLAG )); then
-    benchmark_cmd+=("--render")
-fi
-
-"${benchmark_cmd[@]}" 2>&1 | tee "${LOG_FILE}"
+REPORT_FILE="${RESULTS_DIR}/report${LOG_SUFFIX}.md"
+"${PYTHON_BIN}" "${REPORT_SCRIPT}" \
+    kitten \
+    --cutty-log "${RESULTS_DIR}/cutty${LOG_SUFFIX}.log" \
+    --alacritty-log "${RESULTS_DIR}/alacritty${LOG_SUFFIX}.log" \
+    --output "${REPORT_FILE}"
 
 echo
-status "Finished kitty benchmark for ${LABEL}"
-echo "Saved log: ${LOG_FILE}"
-
-if [[ -f "${RESULTS_DIR}/cutty.log" && -f "${RESULTS_DIR}/alacritty.log" ]]; then
-    echo
-    echo "Both default benchmark logs are present."
-    echo "CuTTY log: ${RESULTS_DIR}/cutty.log"
-    echo "Alacritty log: ${RESULTS_DIR}/alacritty.log"
-fi
+echo "Saved CuTTY log: ${RESULTS_DIR}/cutty${LOG_SUFFIX}.log"
+echo "Saved Alacritty log: ${RESULTS_DIR}/alacritty${LOG_SUFFIX}.log"
+echo "Saved report: ${REPORT_FILE}"
