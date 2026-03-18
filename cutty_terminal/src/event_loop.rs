@@ -162,10 +162,8 @@ where
             }
         }
 
-        let terminal_has_damage = terminal.as_ref().is_some_and(|terminal| terminal.has_damage());
-
-        // Queue terminal redraw only if terminal-visible state actually changed.
-        if terminal_has_damage && state.parser.sync_bytes_count() < processed && processed > 0 {
+        // Queue terminal redraw unless all processed bytes were synchronized.
+        if state.parser.sync_bytes_count() < processed && processed > 0 {
             self.event_proxy.send_event(Event::Wakeup);
         }
 
