@@ -1,5 +1,5 @@
 <p align="center">
-    <img width="200" alt="CuTTY Logo" src="./extra/logo/compat/cutty-term+scanlines.png">
+    <img width="200" alt="CuTTY Logo" src="./extra/logo/cutty-term.png">
 </p>
 
 <h1 align="center">CuTTY, the Copper Teletype</h1>

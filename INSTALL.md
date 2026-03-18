@@ -313,14 +313,14 @@ to system menus. This will install the desktop entry for CuTTY:
 
 ```sh
 sudo cp target/release/cutty /usr/local/bin # or anywhere else in $PATH
-sudo cp extra/logo/cutty-term.svg /usr/share/pixmaps/CuTTY.svg
+sudo cp extra/logo/cutty-term.png /usr/share/pixmaps/CuTTY.png
 sudo desktop-file-install extra/linux/CuTTY.desktop
 sudo update-desktop-database
 ```
 
-If you are having problems with CuTTY's logo, you can replace it with
-prerendered PNGs and simplified SVGs available in the `extra/logo/compat`
-directory.
+The packaged icon assets are derived from `CuTTY.png` in the repository root.
+The canonical PNG icon is available at `extra/logo/cutty-term.png`, and the
+runtime/window icon asset lives at `extra/logo/compat/cutty-term.png`.
 
 ### Manual Page
 
