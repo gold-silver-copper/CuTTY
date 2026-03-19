@@ -39,7 +39,7 @@ use crate::display::hint::{HintMatch, HintState};
 use crate::display::meter::Meter;
 use crate::display::rects::{RenderLine, RenderLines, RenderRect, paint_rect, paint_rects};
 use crate::display::renderer::SceneRenderer;
-use crate::display::text::{TextMetrics, TextSystem};
+use crate::display::text::{TextMetrics, TextSystem, color_from_rgb};
 use crate::display::window::Window;
 use crate::event::{Event, EventType, Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
@@ -815,21 +815,24 @@ impl Display {
             size,
             cell.point.line,
             cell.point.column.0,
+            cell.fg,
         );
     }
 
     fn paint_layout(
         scene: &mut Scene,
-        layout: &parley::Layout<vello::peniko::Brush>,
+        layout: &parley::Layout<()>,
         metrics: TextMetrics,
         size: SizeInfo,
         line: usize,
         column: usize,
+        fg: Rgb,
     ) {
         let transform = Affine::translate((
             (size.padding_x() + column as f32 * size.cell_width() + metrics.glyph_offset_x) as f64,
             (size.padding_y() + line as f32 * size.cell_height() + metrics.glyph_offset_y) as f64,
         ));
+        let brush = vello::peniko::Brush::Solid(color_from_rgb(fg));
 
         for line in layout.lines() {
             for item in line.items() {
@@ -837,7 +840,6 @@ impl Display {
                     continue;
                 };
 
-                let style = glyph_run.style();
                 let run = glyph_run.run();
                 let font = run.font();
                 let font_size = run.font_size();
@@ -846,8 +848,8 @@ impl Display {
 
                 scene
                     .draw_glyphs(font)
-                    .brush(&style.brush)
-                    .hint(true)
+                    .brush(&brush)
+                    .hint(false)
                     .transform(transform)
                     .font_size(font_size)
                     .normalized_coords(run.normalized_coords())
@@ -887,7 +889,7 @@ impl Display {
 
             if !character.is_whitespace() {
                 if let Some(layout) =
-                    self.text_system.shape_string(character.to_string(), fg, false, false)
+                    self.text_system.shape_string(character.to_string(), false, false)
                 {
                     Self::paint_layout(
                         scene,
@@ -896,6 +898,7 @@ impl Display {
                         self.size_info,
                         point.line,
                         column,
+                        fg,
                     );
                 }
             }

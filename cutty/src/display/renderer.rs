@@ -3,7 +3,7 @@ use std::sync::Arc;
 use pollster::block_on;
 use vello::peniko::Color;
 use vello::util::{RenderContext, RenderSurface};
-use vello::{AaConfig, RenderParams, Renderer, RendererOptions, Scene, wgpu};
+use vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene, wgpu};
 use winit::dpi::PhysicalSize;
 use winit::window::Window as WinitWindow;
 
@@ -52,8 +52,11 @@ impl SceneRenderer {
         let mut renderers = Vec::new();
         renderers.resize_with(context.devices.len(), || None);
         renderers[surface.dev_id] = Some(
-            Renderer::new(&context.devices[surface.dev_id].device, RendererOptions::default())
-                .map_err(Error::CreateRenderer)?,
+            Renderer::new(&context.devices[surface.dev_id].device, RendererOptions {
+                antialiasing_support: [AaConfig::Msaa8].into_iter().collect::<AaSupport>(),
+                ..RendererOptions::default()
+            })
+            .map_err(Error::CreateRenderer)?,
         );
 
         Ok(Self {
@@ -96,7 +99,7 @@ impl SceneRenderer {
                 &device_handle.queue,
                 scene,
                 &self.surface.target_view,
-                &RenderParams { base_color, width, height, antialiasing_method: AaConfig::Msaa16 },
+                &RenderParams { base_color, width, height, antialiasing_method: AaConfig::Msaa8 },
             )
             .map_err(Error::Render)?;
 

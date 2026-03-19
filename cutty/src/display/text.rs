@@ -8,7 +8,7 @@ use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStack, FontStyle as ParleyFontStyle,
     FontWeight, GenericFamily, Layout, LayoutContext, LineHeight, StyleProperty,
 };
-use vello::peniko::{Brush, Color};
+use vello::peniko::Color;
 
 use cutty_terminal::term::cell::Flags;
 
@@ -48,17 +48,16 @@ enum LayoutTextKey {
 struct LayoutKey {
     text: LayoutTextKey,
     variant: FontVariant,
-    fg: (u8, u8, u8),
     font_size_bits: u32,
 }
 
 pub struct TextSystem {
     font: Font,
     font_cx: FontContext,
-    layout_cx: LayoutContext<Brush>,
+    layout_cx: LayoutContext<()>,
     metrics: TextMetrics,
     family_stacks: [Arc<[FontFamily<'static>]>; 4],
-    cache: AHashMap<LayoutKey, Arc<Layout<Brush>>>,
+    cache: AHashMap<LayoutKey, Arc<Layout<()>>>,
 }
 
 impl TextSystem {
@@ -90,7 +89,7 @@ impl TextSystem {
         self.cache.clear();
     }
 
-    pub fn shape_cell(&mut self, cell: &RenderableCell) -> Option<Arc<Layout<Brush>>> {
+    pub fn shape_cell(&mut self, cell: &RenderableCell) -> Option<Arc<Layout<()>>> {
         if cell.flags.contains(Flags::HIDDEN) {
             return None;
         }
@@ -100,19 +99,18 @@ impl TextSystem {
             let mut text = String::with_capacity(1 + extra.len());
             text.push(cell.character);
             text.extend(extra.iter().copied());
-            Some(self.shape_text(text, variant, cell.fg))
+            Some(self.shape_text(text, variant))
         } else {
-            Some(self.shape_char(cell.character, variant, cell.fg))
+            Some(self.shape_char(cell.character, variant))
         }
     }
 
     pub fn shape_string(
         &mut self,
         text: impl Into<String>,
-        fg: Rgb,
         bold: bool,
         italic: bool,
-    ) -> Option<Arc<Layout<Brush>>> {
+    ) -> Option<Arc<Layout<()>>> {
         let text = text.into();
         if text.is_empty() {
             return None;
@@ -125,17 +123,16 @@ impl TextSystem {
             (false, false) => FontVariant::Normal,
         };
         if let Some(character) = single_char(&text) {
-            Some(self.shape_char(character, variant, fg))
+            Some(self.shape_char(character, variant))
         } else {
-            Some(self.shape_text(text, variant, fg))
+            Some(self.shape_text(text, variant))
         }
     }
 
-    fn shape_char(&mut self, character: char, variant: FontVariant, fg: Rgb) -> Arc<Layout<Brush>> {
+    fn shape_char(&mut self, character: char, variant: FontVariant) -> Arc<Layout<()>> {
         let key = LayoutKey {
             text: LayoutTextKey::Char(character),
             variant,
-            fg: fg.as_tuple(),
             font_size_bits: self.font.size().as_px().to_bits(),
         };
         if let Some(layout) = self.cache.get(&key) {
@@ -144,21 +141,20 @@ impl TextSystem {
 
         let mut buffer = [0; 4];
         let text = character.encode_utf8(&mut buffer);
-        self.build_and_cache_layout(key, text, variant, fg)
+        self.build_and_cache_layout(key, text, variant)
     }
 
-    fn shape_text(&mut self, text: String, variant: FontVariant, fg: Rgb) -> Arc<Layout<Brush>> {
+    fn shape_text(&mut self, text: String, variant: FontVariant) -> Arc<Layout<()>> {
         let key = LayoutKey {
             text: LayoutTextKey::String(text.clone().into_boxed_str()),
             variant,
-            fg: fg.as_tuple(),
             font_size_bits: self.font.size().as_px().to_bits(),
         };
         if let Some(layout) = self.cache.get(&key) {
             return Arc::clone(layout);
         }
 
-        self.build_and_cache_layout(key, &text, variant, fg)
+        self.build_and_cache_layout(key, &text, variant)
     }
 
     fn build_and_cache_layout(
@@ -166,8 +162,7 @@ impl TextSystem {
         key: LayoutKey,
         text: &str,
         variant: FontVariant,
-        fg: Rgb,
-    ) -> Arc<Layout<Brush>> {
+    ) -> Arc<Layout<()>> {
         let family = Arc::clone(&self.family_stacks[variant.as_index()]);
         let (font_style, font_weight) = font_style(variant);
 
@@ -177,7 +172,6 @@ impl TextSystem {
         builder.push_default(StyleProperty::FontStyle(font_style));
         builder.push_default(StyleProperty::FontWeight(font_weight));
         builder.push_default(LineHeight::Absolute(self.metrics.cell_height));
-        builder.push_default(StyleProperty::Brush(Brush::Solid(color_from_rgb(fg))));
 
         let mut layout = builder.build(text);
         layout.break_all_lines(None);
@@ -195,7 +189,6 @@ impl TextSystem {
         let mut builder = self.layout_cx.ranged_builder(&mut self.font_cx, sample, 1.0, true);
         builder.push_default(FontStack::from(&family[..]));
         builder.push_default(StyleProperty::FontSize(font_size));
-        builder.push_default(StyleProperty::Brush(Brush::Solid(Color::WHITE)));
 
         let mut layout = builder.build(sample);
         layout.break_all_lines(None);
@@ -345,11 +338,14 @@ mod tests {
     use std::borrow::Cow;
     use std::sync::Arc;
 
+    use cutty_terminal::index::Point;
+    use cutty_terminal::term::cell::Flags;
     use parley::{FontFamily, GenericFamily};
 
     use super::{FontVariant, TextSystem, font_family_stack, push_configured_family_names};
     use crate::config::font::Font;
     use crate::display::color::Rgb;
+    use crate::display::content::RenderableCell;
 
     #[test]
     fn font_update_recomputes_metrics() {
@@ -367,10 +363,9 @@ mod tests {
     #[test]
     fn single_character_layouts_are_reused_without_cloning_the_layout() {
         let mut text = TextSystem::new(Font::default());
-        let fg = Rgb::new(255, 255, 255);
 
-        let first = text.shape_string("x", fg, false, false).unwrap();
-        let second = text.shape_string("x", fg, false, false).unwrap();
+        let first = text.shape_string("x", false, false).unwrap();
+        let second = text.shape_string("x", false, false).unwrap();
 
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(text.cache_len(), 1);
@@ -379,10 +374,33 @@ mod tests {
     #[test]
     fn repeated_multicharacter_layouts_share_cached_layout() {
         let mut text = TextSystem::new(Font::default());
-        let fg = Rgb::new(255, 255, 255);
 
-        let first = text.shape_string("hello", fg, false, false).unwrap();
-        let second = text.shape_string("hello", fg, false, false).unwrap();
+        let first = text.shape_string("hello", false, false).unwrap();
+        let second = text.shape_string("hello", false, false).unwrap();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(text.cache_len(), 1);
+    }
+
+    #[test]
+    fn foreground_color_does_not_split_shape_cache() {
+        let mut text = TextSystem::new(Font::default());
+        let white = Rgb::new(255, 255, 255);
+        let red = Rgb::new(255, 0, 0);
+        let base_cell = RenderableCell {
+            character: 'x',
+            point: Point::default(),
+            fg: white,
+            bg: Rgb::default(),
+            bg_alpha: 0.0,
+            underline: Rgb::default(),
+            flags: Flags::empty(),
+            extra: None,
+        };
+        let red_cell = RenderableCell { fg: red, ..base_cell.clone() };
+
+        let first = text.shape_cell(&base_cell).unwrap();
+        let second = text.shape_cell(&red_cell).unwrap();
 
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(text.cache_len(), 1);
