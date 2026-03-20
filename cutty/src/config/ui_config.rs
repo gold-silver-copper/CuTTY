@@ -88,30 +88,6 @@ pub struct UiConfig {
 
     /// Keyboard configuration.
     keyboard: Keyboard,
-
-    /// Path to a shell program to run on startup.
-    #[config(deprecated = "use terminal.shell instead")]
-    shell: Option<Program>,
-
-    /// Configuration file imports.
-    ///
-    /// This is never read since the field is directly accessed through the config's
-    /// [`toml::Value`], but still present to prevent unused field warnings.
-    #[config(deprecated = "use general.import instead")]
-    import: Option<Vec<String>>,
-
-    /// Shell startup directory.
-    #[config(deprecated = "use general.working_directory instead")]
-    working_directory: Option<PathBuf>,
-
-    /// Live config reload.
-    #[config(deprecated = "use general.live_config_reload instead")]
-    live_config_reload: Option<bool>,
-
-    /// Offer IPC through a unix socket.
-    #[cfg(unix)]
-    #[config(deprecated = "use general.ipc_socket instead")]
-    pub ipc_socket: Option<bool>,
 }
 
 impl UiConfig {
@@ -129,12 +105,9 @@ impl UiConfig {
 
     /// Derive [`PtyOptions`] from the config.
     pub fn pty_config(&self) -> PtyOptions {
-        let shell = self.terminal.shell.clone().or_else(|| self.shell.clone()).map(Into::into);
-        let working_directory =
-            self.working_directory.clone().or_else(|| self.general.working_directory.clone());
         PtyOptions {
-            working_directory,
-            shell,
+            working_directory: self.general.working_directory.clone(),
+            shell: self.terminal.shell.clone().map(Into::into),
             drain_on_exit: false,
             env: HashMap::new(),
             #[cfg(target_os = "windows")]
@@ -159,13 +132,13 @@ impl UiConfig {
 
     #[inline]
     pub fn live_config_reload(&self) -> bool {
-        self.live_config_reload.unwrap_or(self.general.live_config_reload)
+        self.general.live_config_reload
     }
 
     #[cfg(unix)]
     #[inline]
     pub fn ipc_socket(&self) -> bool {
-        self.ipc_socket.unwrap_or(self.general.ipc_socket)
+        self.general.ipc_socket
     }
 }
 
@@ -683,6 +656,7 @@ mod tests {
     use super::*;
 
     use cutty_terminal::term::test::mock_term;
+    use cutty_terminal::tty::Shell;
 
     use crate::display::hint::visible_regex_match_iter;
 
@@ -733,5 +707,42 @@ mod tests {
                 "Should not match url in string {url_like}, but instead got: {matches:?}"
             )
         }
+    }
+
+    #[test]
+    fn pty_config_uses_terminal_shell_and_general_working_directory() {
+        let mut config = UiConfig::default();
+        config.general.working_directory = Some(PathBuf::from("/tmp/cutty"));
+        config.terminal.shell = Some(Program::WithArgs {
+            program: String::from("/bin/zsh"),
+            args: vec![String::from("-l")],
+        });
+
+        let pty = config.pty_config();
+
+        assert_eq!(pty.working_directory, Some(PathBuf::from("/tmp/cutty")));
+        assert_eq!(pty.shell, Some(Shell::new(String::from("/bin/zsh"), vec![String::from("-l")])));
+    }
+
+    #[test]
+    fn root_level_terminal_keys_are_ignored() {
+        let config: UiConfig = toml::from_str(
+            r#"
+            shell = "/bin/zsh"
+            working_directory = "/tmp/legacy"
+            live_config_reload = false
+
+            [general]
+            ipc_socket = false
+            "#,
+        )
+        .unwrap();
+
+        let pty = config.pty_config();
+        assert_eq!(pty.shell, None);
+        assert_eq!(pty.working_directory, None);
+        assert!(config.live_config_reload());
+        #[cfg(unix)]
+        assert!(!config.ipc_socket());
     }
 }

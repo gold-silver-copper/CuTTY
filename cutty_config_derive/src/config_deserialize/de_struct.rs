@@ -107,7 +107,6 @@ fn fields_deserializer<T>(fields: &Punctuated<Field, T>) -> FieldStreams {
 fn field_deserializer(field_streams: &mut FieldStreams, field: &Field) -> Result<(), Error> {
     let ident = field.ident.as_ref().expect("unreachable tuple struct");
     let literal = ident.to_string();
-    let mut literals = vec![literal.clone()];
 
     // Create default stream for deserializing fields.
     let mut match_assignment_stream = quote! {
@@ -126,10 +125,7 @@ fn field_deserializer(field_streams: &mut FieldStreams, field: &Field) -> Result
 
     // Iterate over all #[config(...)] attributes.
     for attr in field.attrs.iter().filter(|attr| attr.path().is_ident("config")) {
-        let parsed = match attr.parse_args::<Attr>() {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
+        let parsed = attr.parse_args::<Attr>()?;
 
         match parsed.ident.as_str() {
             // Skip deserialization for `#[config(skip)]` fields.
@@ -149,25 +145,12 @@ fn field_deserializer(field_streams: &mut FieldStreams, field: &Field) -> Result
                     config.#ident = serde::Deserialize::deserialize(flattened).unwrap_or_default();
                 });
             },
-            "deprecated" | "removed" => {
-                // Construct deprecation/removal message with optional attribute override.
-                let mut message = format!("Config warning: {} has been {}", literal, parsed.ident);
-                if let Some(warning) = parsed.param {
-                    message = format!("{}; {}", message, warning.value());
-                }
-
-                // Append stream to log deprecation/removal warning.
-                match_assignment_stream.extend(quote! {
-                    log::warn!(target: #LOG_TARGET, #message);
-                });
+            _ => {
+                return Err(Error::new(
+                    attr.span(),
+                    format!("Unsupported #[config({})] attribute", parsed.ident),
+                ));
             },
-            // Add aliases to match pattern.
-            "alias" => {
-                if let Some(alias) = parsed.param {
-                    literals.push(alias.value());
-                }
-            },
-            _ => (),
         }
     }
 
@@ -186,7 +169,7 @@ fn field_deserializer(field_streams: &mut FieldStreams, field: &Field) -> Result
 
     // Create the token stream for deserialization and error handling.
     field_streams.match_assignments.extend(quote! {
-        #(#literals)|* => { #match_assignment_stream },
+        #literal => { #match_assignment_stream },
     });
 
     Ok(())

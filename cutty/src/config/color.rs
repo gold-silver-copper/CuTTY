@@ -113,9 +113,7 @@ impl<'de> Deserialize<'de> for ColorIndex {
 
 #[derive(ConfigDeserialize, Serialize, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct InvertedCellColors {
-    #[config(alias = "text")]
     pub foreground: CellRgb,
-    #[config(alias = "cursor")]
     pub background: CellRgb,
 }
 

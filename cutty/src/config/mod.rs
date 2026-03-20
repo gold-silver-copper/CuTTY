@@ -242,8 +242,7 @@ pub fn imports(
     base_path: &Path,
     recursion_limit: usize,
 ) -> StdResult<Vec<StdResult<PathBuf, String>>, String> {
-    let imports =
-        config.get("import").or_else(|| config.get("general").and_then(|g| g.get("import")));
+    let imports = config.get("general").and_then(|g| g.get("import"));
     let imports = match imports {
         Some(Value::Array(imports)) => imports,
         Some(_) => return Err("Invalid import type: expected a sequence".into()),
@@ -341,5 +340,29 @@ mod tests {
     #[test]
     fn empty_config() {
         toml::from_str::<UiConfig>("").unwrap();
+    }
+
+    #[test]
+    fn root_level_imports_are_ignored() {
+        let config: Value = toml::from_str(r#"import = ["theme.toml"]"#).unwrap();
+        let base = Path::new("/tmp/cutty.toml");
+
+        assert!(imports(&config, base, IMPORT_RECURSION_LIMIT).unwrap().is_empty());
+    }
+
+    #[test]
+    fn general_imports_are_loaded() {
+        let config: Value = toml::from_str(
+            r#"
+            [general]
+            import = ["theme.toml"]
+            "#,
+        )
+        .unwrap();
+        let base = Path::new("/tmp/cutty.toml");
+
+        let import_paths = imports(&config, base, IMPORT_RECURSION_LIMIT).unwrap();
+        assert_eq!(import_paths.len(), 1);
+        assert_eq!(import_paths[0].as_ref().unwrap(), &PathBuf::from("/tmp/theme.toml"));
     }
 }

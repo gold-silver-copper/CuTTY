@@ -679,40 +679,8 @@ impl<'a> Deserialize<'a> for BindingKey {
                 let (key, location) = if keycode.chars().count() == 1 {
                     (Key::Character(keycode.to_lowercase().into()), KeyLocation::Any)
                 } else {
-                    // Translate legacy winit codes into their modern counterparts.
                     match keycode.as_str() {
-                        "Back" => (Key::Named(NamedKey::Backspace), KeyLocation::Any),
-                        "Up" => (Key::Named(NamedKey::ArrowUp), KeyLocation::Any),
-                        "Down" => (Key::Named(NamedKey::ArrowDown), KeyLocation::Any),
-                        "Left" => (Key::Named(NamedKey::ArrowLeft), KeyLocation::Any),
-                        "Right" => (Key::Named(NamedKey::ArrowRight), KeyLocation::Any),
-                        "At" => (Key::Character("@".into()), KeyLocation::Any),
-                        "Colon" => (Key::Character(":".into()), KeyLocation::Any),
-                        "Period" => (Key::Character(".".into()), KeyLocation::Any),
-                        "LBracket" => (Key::Character("[".into()), KeyLocation::Any),
-                        "RBracket" => (Key::Character("]".into()), KeyLocation::Any),
-                        "Semicolon" => (Key::Character(";".into()), KeyLocation::Any),
-                        "Backslash" => (Key::Character("\\".into()), KeyLocation::Any),
-
-                        // The keys which has alternative on numeric pad.
                         "Enter" => (Key::Named(NamedKey::Enter), KeyLocation::Standard),
-                        "Return" => (Key::Named(NamedKey::Enter), KeyLocation::Standard),
-                        "Plus" => (Key::Character("+".into()), KeyLocation::Standard),
-                        "Comma" => (Key::Character(",".into()), KeyLocation::Standard),
-                        "Slash" => (Key::Character("/".into()), KeyLocation::Standard),
-                        "Equals" => (Key::Character("=".into()), KeyLocation::Standard),
-                        "Minus" => (Key::Character("-".into()), KeyLocation::Standard),
-                        "Asterisk" => (Key::Character("*".into()), KeyLocation::Standard),
-                        "Key1" => (Key::Character("1".into()), KeyLocation::Standard),
-                        "Key2" => (Key::Character("2".into()), KeyLocation::Standard),
-                        "Key3" => (Key::Character("3".into()), KeyLocation::Standard),
-                        "Key4" => (Key::Character("4".into()), KeyLocation::Standard),
-                        "Key5" => (Key::Character("5".into()), KeyLocation::Standard),
-                        "Key6" => (Key::Character("6".into()), KeyLocation::Standard),
-                        "Key7" => (Key::Character("7".into()), KeyLocation::Standard),
-                        "Key8" => (Key::Character("8".into()), KeyLocation::Standard),
-                        "Key9" => (Key::Character("9".into()), KeyLocation::Standard),
-                        "Key0" => (Key::Character("0".into()), KeyLocation::Standard),
 
                         // Special case numpad.
                         "NumpadEnter" => (Key::Named(NamedKey::Enter), KeyLocation::Numpad),
@@ -1248,6 +1216,7 @@ impl<'a> de::Deserialize<'a> for ModsWrapper {
 mod tests {
     use super::*;
 
+    use serde::Deserialize;
     use winit::keyboard::ModifiersState;
 
     type MockBinding = Binding<usize>;
@@ -1448,5 +1417,28 @@ mod tests {
         assert!(binding.is_triggered_by(BindingMode::VI, mods, &t));
         assert!(!binding.is_triggered_by(BindingMode::ALT_SCREEN, mods, &t));
         assert!(!binding.is_triggered_by(BindingMode::ALT_SCREEN | BindingMode::VI, mods, &t));
+    }
+
+    #[test]
+    fn legacy_key_names_are_rejected() {
+        assert!(BindingKey::deserialize(toml::Value::String(String::from("Return"))).is_err());
+        assert!(BindingKey::deserialize(toml::Value::String(String::from("Key1"))).is_err());
+        assert!(BindingKey::deserialize(toml::Value::String(String::from("Back"))).is_err());
+    }
+
+    #[test]
+    fn current_numpad_key_names_still_parse() {
+        let key =
+            BindingKey::deserialize(toml::Value::String(String::from("NumpadEnter"))).unwrap();
+        assert_eq!(key, BindingKey::Keycode {
+            key: Key::Named(NamedKey::Enter),
+            location: KeyLocation::Numpad
+        });
+
+        let key = BindingKey::deserialize(toml::Value::String(String::from("Enter"))).unwrap();
+        assert_eq!(key, BindingKey::Keycode {
+            key: Key::Named(NamedKey::Enter),
+            location: KeyLocation::Standard,
+        });
     }
 }

@@ -6,7 +6,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::parse::{self, Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{GenericParam, Ident, LitStr, Token, TypeParam};
+use syn::{GenericParam, Ident, TypeParam};
 
 mod config_deserialize;
 mod serde_replace;
@@ -61,13 +61,11 @@ pub(crate) fn generics_streams<T>(params: &Punctuated<GenericParam, T>) -> Gener
 /// Field attribute.
 pub(crate) struct Attr {
     ident: String,
-    param: Option<LitStr>,
 }
 
 impl Parse for Attr {
     fn parse(input: ParseStream<'_>) -> parse::Result<Self> {
         let ident = input.parse::<Ident>()?.to_string();
-        let param = input.parse::<Token![=]>().and_then(|_| input.parse()).ok();
-        Ok(Self { ident, param })
+        Ok(Self { ident })
     }
 }

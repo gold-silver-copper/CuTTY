@@ -78,6 +78,12 @@ set of features with high performance.
 
 		. _%APPDATA%\\cutty\\cutty.toml_
 
+	CuTTY only supports TOML configuration files. Use the canonical table paths
+	documented in *cutty*(5), such as *[general].import*,
+	*[general].working_directory*, *[general].live_config_reload*,
+	*[general].ipc_socket*, and *[terminal].shell*. Legacy YAML files and old
+	root-level aliases are not supported.
+
 *--embed* _<PARENT>_
 
 	X11 window ID to embed CuTTY within (decimal or hexadecimal with _0x_ prefix).

@@ -59,6 +59,13 @@ On Windows, the config file will be looked for in:
 
 * `%APPDATA%\cutty\cutty.toml`
 
+CuTTY only supports TOML configuration files. The canonical config keys live
+under the documented tables like `[general]` and `[terminal]`; for example,
+use `[general].import`, `[general].working_directory`,
+`[general].live_config_reload`, `[general].ipc_socket`, and
+`[terminal].shell`. Legacy YAML configs and old root-level aliases are not
+supported.
+
 ## Contributing
 
 A guideline about contributing to CuTTY can be found in the

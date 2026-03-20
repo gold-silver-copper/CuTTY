@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::punctuated::Punctuated;
+use syn::spanned::Spanned;
 use syn::{
     Data, DataStruct, DeriveInput, Error, Field, Fields, Generics, Ident, parse_macro_input,
 };
@@ -87,13 +88,22 @@ fn match_arms<T>(fields: &Punctuated<Field, T>) -> Result<TokenStream2, syn::Err
         let ident = field.ident.as_ref().expect("unreachable tuple struct");
         let literal = ident.to_string();
 
-        // Check if #[config(flattened)] attribute is present.
-        let flatten = field
-            .attrs
-            .iter()
-            .filter(|attr| (*attr).path().is_ident("config"))
-            .filter_map(|attr| attr.parse_args::<Attr>().ok())
-            .any(|parsed| parsed.ident.as_str() == "flatten");
+        let mut flatten = false;
+        let mut skip = false;
+        for attr in field.attrs.iter().filter(|attr| (*attr).path().is_ident("config")) {
+            let parsed = attr.parse_args::<Attr>()?;
+
+            match parsed.ident.as_str() {
+                "flatten" => flatten = true,
+                "skip" => skip = true,
+                _ => {
+                    return Err(Error::new(
+                        attr.span(),
+                        format!("Unsupported #[config({})] attribute", parsed.ident),
+                    ));
+                },
+            }
+        }
 
         if flatten && flattened_arm.is_some() {
             return Err(Error::new(ident.span(), MULTIPLE_FLATTEN_ERROR));
@@ -101,32 +111,12 @@ fn match_arms<T>(fields: &Punctuated<Field, T>) -> Result<TokenStream2, syn::Err
             flattened_arm = Some(quote! {
                 _ => cutty_config::SerdeReplace::replace(&mut self.#ident, value)?,
             });
+        } else if skip {
+            continue;
         } else {
-            // Extract all `#[config(alias = "...")]` attribute values.
-            let aliases = field
-                .attrs
-                .iter()
-                .filter(|attr| (*attr).path().is_ident("config"))
-                .filter_map(|attr| attr.parse_args::<Attr>().ok())
-                .filter(|parsed| parsed.ident.as_str() == "alias")
-                .map(|parsed| {
-                    let value = parsed
-                        .param
-                        .ok_or_else(|| format!("Field \"{ident}\" has no alias value"))?
-                        .value();
-
-                    if value.trim().is_empty() {
-                        return Err(format!("Field \"{ident}\" has an empty alias value"));
-                    }
-
-                    Ok(value)
-                })
-                .collect::<Result<Vec<String>, String>>()
-                .map_err(|msg| Error::new(ident.span(), msg))?;
-
             stream.extend(quote! {
-                    #(#aliases)|* | #literal => cutty_config::SerdeReplace::replace(&mut
-            self.#ident, next_value)?,         });
+                #literal => cutty_config::SerdeReplace::replace(&mut self.#ident, next_value)?,
+            });
         }
     }
 

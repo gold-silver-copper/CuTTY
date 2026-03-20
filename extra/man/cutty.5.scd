@@ -9,6 +9,12 @@ CuTTY - TOML configuration file format.
 CuTTY's configuration file uses the TOML format. The format's specification
 can be found at _https://toml.io/en/v1.0.0_.
 
+CuTTY only supports TOML configuration files. Use the canonical table paths
+documented in this manpage, such as *[general].import*,
+*[general].working_directory*, *[general].live_config_reload*,
+*[general].ipc_socket*, and *[terminal].shell*. Legacy YAML files and old
+root-level aliases are not supported.
+
 # LOCATION
 
 CuTTY doesn't create the config file for you, but it looks for one in the
@@ -317,23 +323,23 @@ Colors are specified using their hexadecimal values with a _#_ prefix: _#RRGGBB_
 
 		Default: _"None"_
 
-*cursor* = { text = _"<string>"_, cursor = _"<string>"_ }
+*cursor* = { foreground = _"<string>"_, background = _"<string>"_ }
 
 	Colors which should be used to draw the terminal cursor.
 
 	Allowed values are hexadecimal colors like _#ff00ff_, or
 	_CellForeground_/_CellBackground_, which references the affected cell.
 
-	Default: { text = _"CellBackground"_, cursor = _"CellForeground"_ }
+	Default: { foreground = _"CellBackground"_, background = _"CellForeground"_ }
 
-*vi_mode_cursor* = { text = _"<string>"_, cursor = _"<string>"_ }
+*vi_mode_cursor* = { foreground = _"<string>"_, background = _"<string>"_ }
 
 	Colors for the cursor when the vi mode is active.
 
 	Allowed values are hexadecimal colors like _#ff00ff_, or
 	_CellForeground_/_CellBackground_, which references the affected cell.
 
-	Default: { text = _"CellBackground"_, cursor = _"CellForeground"_ }
+	Default: { foreground = _"CellBackground"_, background = _"CellForeground"_ }
 
 *search*
 
@@ -388,14 +394,14 @@ Colors are specified using their hexadecimal values with a _#_ prefix: _#RRGGBB_
 
 	Default: { foreground = _"#181818"_, background = _"#d8d8d8"_ }
 
-*selection* = { text = _"<string>"_, background = _"<string>"_ }
+*selection* = { foreground = _"<string>"_, background = _"<string>"_ }
 
 	Colors used for drawing selections.
 
 	Allowed values are hexadecimal colors like _#ff00ff_, or
 	_CellForeground_/_CellBackground_, which references the affected cell.
 
-	Default: { text = _"CellBackground"_, background = _"CellForeground"_ }
+	Default: { foreground = _"CellBackground"_, background = _"CellForeground"_ }
 
 *normal*
 
