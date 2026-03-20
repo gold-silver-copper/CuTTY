@@ -201,6 +201,7 @@ impl Window {
         })
     }
 
+    #[cfg(target_os = "macos")]
     #[inline]
     pub fn raw_window_handle(&self) -> RawWindowHandle {
         self.window.window_handle().unwrap().as_raw()
