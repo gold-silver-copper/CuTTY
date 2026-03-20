@@ -21,6 +21,11 @@ lto = "thin"
 debug = 1
 incremental = false
 
+[profile.flamegraph]
+inherits = "release"
+debug = 2
+strip = "none"
+
 [workspace.dependencies]
 toml = "0.9.11"
 toml_edit = "0.24.0"
