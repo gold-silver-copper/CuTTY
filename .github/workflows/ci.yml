@@ -19,7 +19,7 @@ jobs:
         run: cargo test
       - name: Stable (no default features)
         run: cargo test -p cutty_terminal --no-default-features
-      - name: Oldstable
+      - name: MSRV
         run: |
           rustup default $(cat Cargo.toml | grep "rust-version" | sed 's/.*"\(.*\)".*/\1/')
           cargo test
