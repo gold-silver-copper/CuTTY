@@ -84,7 +84,7 @@ impl<R: Read + Send + 'static> UnblockedReader<R> {
                     },
 
                     Poll::Ready(Err(e)) => {
-                        log::error!("error writing to pipe: {}", e);
+                        log::error!("error writing to pipe: {e}");
                         return;
                     },
 
@@ -182,7 +182,7 @@ impl<W: Write + Send + 'static> UnblockedWriter<W> {
                     },
 
                     Poll::Ready(Err(e)) => {
-                        log::error!("error writing to pipe: {}", e);
+                        log::error!("error writing to pipe: {e}");
                         return;
                     },
 
