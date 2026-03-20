@@ -1,2 +1,3 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+cutty_terminal/tests/ref/**/cutty.recording -text
