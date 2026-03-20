@@ -134,12 +134,9 @@ fn config_deserialize() {
     let mut warn_logs = logger.warn_logs.lock().unwrap();
     warn_logs.sort_unstable();
     assert_eq!(warn_logs.as_slice(), [
-        "Config warning: enom_error has been deprecated\nUse `cutty migrate` to automatically \
-         resolve it",
-        "Config warning: field1 has been deprecated; use field2 instead\nUse `cutty migrate` to \
-         automatically resolve it",
-        "Config warning: gone has been removed; it's gone\nUse `cutty migrate` to automatically \
-         resolve it",
+        "Config warning: enom_error has been deprecated",
+        "Config warning: field1 has been deprecated; use field2 instead",
+        "Config warning: gone has been removed; it's gone",
         "Unused config key: field3",
     ]);
 }

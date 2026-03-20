@@ -131,21 +131,6 @@ esac
     ;;
 esac
 ;;
-(migrate)
-_arguments "${_arguments_options[@]}" : \
-'-c+[Path to the configuration file]:CONFIG_FILE:_files' \
-'--config-file=[Path to the configuration file]:CONFIG_FILE:_files' \
-'-d[Only output TOML config to STDOUT]' \
-'--dry-run[Only output TOML config to STDOUT]' \
-'-i[Do not recurse over imports]' \
-'--skip-imports[Do not recurse over imports]' \
-'--skip-renames[Do not move renamed fields to their new location]' \
-'-s[Do not output to STDOUT]' \
-'--silent[Do not output to STDOUT]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 ":: :_cutty__help_commands" \
@@ -186,10 +171,6 @@ _arguments "${_arguments_options[@]}" : \
     ;;
 esac
 ;;
-(migrate)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -207,7 +188,6 @@ esac
 _cutty_commands() {
     local commands; commands=(
 'msg:Send a message to the CuTTY socket' \
-'migrate:Migrate the configuration file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'cutty commands' commands "$@"
@@ -216,7 +196,6 @@ _cutty_commands() {
 _cutty__help_commands() {
     local commands; commands=(
 'msg:Send a message to the CuTTY socket' \
-'migrate:Migrate the configuration file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'cutty help commands' commands "$@"
@@ -225,11 +204,6 @@ _cutty__help_commands() {
 _cutty__help__help_commands() {
     local commands; commands=()
     _describe -t commands 'cutty help help commands' commands "$@"
-}
-(( $+functions[_cutty__help__migrate_commands] )) ||
-_cutty__help__migrate_commands() {
-    local commands; commands=()
-    _describe -t commands 'cutty help migrate commands' commands "$@"
 }
 (( $+functions[_cutty__help__msg_commands] )) ||
 _cutty__help__msg_commands() {
@@ -254,11 +228,6 @@ _cutty__help__msg__create-window_commands() {
 _cutty__help__msg__get-config_commands() {
     local commands; commands=()
     _describe -t commands 'cutty help msg get-config commands' commands "$@"
-}
-(( $+functions[_cutty__migrate_commands] )) ||
-_cutty__migrate_commands() {
-    local commands; commands=()
-    _describe -t commands 'cutty migrate commands' commands "$@"
 }
 (( $+functions[_cutty__msg_commands] )) ||
 _cutty__msg_commands() {

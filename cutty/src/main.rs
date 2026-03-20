@@ -38,7 +38,6 @@ mod logging;
 #[cfg(target_os = "macos")]
 mod macos;
 mod message_bar;
-mod migrate;
 #[cfg(windows)]
 mod panic;
 #[cfg(unix)]
@@ -78,7 +77,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     match options.subcommands {
         #[cfg(unix)]
         Some(Subcommands::Msg(options)) => msg(options)?,
-        Some(Subcommands::Migrate(options)) => migrate::migrate(options),
         None => cutty(options)?,
     }
 

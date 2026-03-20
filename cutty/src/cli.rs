@@ -235,7 +235,6 @@ impl WindowIdentity {
 pub enum Subcommands {
     #[cfg(unix)]
     Msg(MessageOptions),
-    Migrate(MigrateOptions),
 }
 
 /// Send a message to the CuTTY socket.
@@ -263,30 +262,6 @@ pub enum SocketMessage {
 
     /// Read runtime CuTTY configuration.
     GetConfig(IpcGetConfig),
-}
-
-/// Migrate the configuration file.
-#[derive(Args, Clone, Debug)]
-pub struct MigrateOptions {
-    /// Path to the configuration file.
-    #[clap(short, long, value_hint = ValueHint::FilePath)]
-    pub config_file: Option<PathBuf>,
-
-    /// Only output TOML config to STDOUT.
-    #[clap(short, long)]
-    pub dry_run: bool,
-
-    /// Do not recurse over imports.
-    #[clap(short = 'i', long)]
-    pub skip_imports: bool,
-
-    /// Do not move renamed fields to their new location.
-    #[clap(long)]
-    pub skip_renames: bool,
-
-    #[clap(short, long)]
-    /// Do not output to STDOUT.
-    pub silent: bool,
 }
 
 /// Subset of options that we pass to 'create-window' IPC subcommand.
