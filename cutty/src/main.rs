@@ -50,7 +50,7 @@ mod window_context;
 use crate::cli::MessageOptions;
 #[cfg(not(any(target_os = "macos", windows)))]
 use crate::cli::SocketMessage;
-use crate::cli::Options;
+use crate::cli::{Options, Subcommands};
 use crate::config::UiConfig;
 use crate::config::monitor::ConfigMonitor;
 use crate::event::{Event, Processor};
