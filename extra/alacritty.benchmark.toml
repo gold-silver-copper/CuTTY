@@ -1,0 +1,139 @@
+# Benchmark-oriented Alacritty config derived from ~/.config/cutty/cutty.toml.
+#
+# This keeps the same sizing, colors, cursor, scrolling, and key behaviors as
+# closely as possible for apples-to-apples comparisons with CuTTY.
+#
+# Alacritty does not use CuTTY's CSS-style font family stack syntax, so the
+# family is intentionally flattened to the primary face from the CuTTY config.
+
+[general]
+import = []
+live_config_reload = true
+ipc_socket = true
+
+[env]
+TERM_PROGRAM = "Alacritty"
+COLORTERM = "truecolor"
+EDITOR = "hx"
+
+[window]
+dimensions = { columns = 120, lines = 34 }
+padding = { x = 10, y = 8 }
+dynamic_padding = true
+decorations = "Full"
+opacity = 1.0
+blur = false
+startup_mode = "Windowed"
+dynamic_title = true
+
+[scrolling]
+history = 50000
+multiplier = 3
+
+[font]
+size = 16.0
+
+[font.normal]
+family = "FiraMono Nerd Font"
+style = "Regular"
+
+[font.bold]
+family = "FiraMono Nerd Font"
+style = "Bold"
+
+[font.italic]
+family = "FiraMono Nerd Font"
+style = "Italic"
+
+[font.bold_italic]
+family = "FiraMono Nerd Font"
+style = "Bold Italic"
+
+[colors]
+draw_bold_text_with_bright_colors = true
+
+[colors.primary]
+foreground = "#d5d8da"
+background = "#101418"
+bright_foreground = "#ffffff"
+
+[colors.cursor]
+foreground = "CellBackground"
+background = "#7aa2f7"
+
+[colors.vi_mode_cursor]
+foreground = "CellBackground"
+background = "#e0af68"
+
+[colors.selection]
+foreground = "CellBackground"
+background = "CellForeground"
+
+[colors.search.matches]
+foreground = "#101418"
+background = "#e0af68"
+
+[colors.search.focused_match]
+foreground = "#101418"
+background = "#9ece6a"
+
+[colors.footer_bar]
+foreground = "#101418"
+background = "#c0caf5"
+
+[colors.normal]
+black = "#1b1f23"
+red = "#f7768e"
+green = "#9ece6a"
+yellow = "#e0af68"
+blue = "#7aa2f7"
+magenta = "#bb9af7"
+cyan = "#7dcfff"
+white = "#c0caf5"
+
+[colors.bright]
+black = "#4b5563"
+red = "#ff899d"
+green = "#b9f27c"
+yellow = "#f5c97a"
+blue = "#8db0ff"
+magenta = "#c7a9ff"
+cyan = "#a4daff"
+white = "#f9fafb"
+
+[selection]
+semantic_escape_chars = ",.;:()[]{}<>\t"
+save_to_clipboard = true
+
+[cursor]
+style = { shape = "Block", blinking = "Off" }
+vi_mode_style = { shape = "Block", blinking = "Never" }
+unfocused_hollow = true
+
+[terminal]
+osc52 = "OnlyCopy"
+# Uncomment and adapt this if you want Alacritty to start a specific shell:
+# shell = { program = "/bin/zsh", args = ["-l"] }
+
+[mouse]
+hide_when_typing = true
+
+[hints]
+alphabet = "jfkdls;ahgurieowpq"
+
+[[hints.enabled]]
+regex = "(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file:|git://|ssh:|ftp://)[^\\u0000-\\u001F\\u007F-\\u009F<>\"\\s{}|\\\\^⟨⟩`]+"
+hyperlinks = true
+post_processing = true
+persist = false
+action = "Copy"
+binding = { key = "U", mods = "Control|Shift", mode = "~Vi|~Search" }
+mouse = { enabled = false, mods = "None" }
+
+[keyboard]
+bindings = [
+  { key = "N", mods = "Control|Shift", action = "CreateNewWindow" },
+  { key = "F", mods = "Control|Shift", action = "SearchForward" },
+  { key = "NumpadAdd", mods = "Control", action = "IncreaseFontSize" },
+  { key = "NumpadSubtract", mods = "Control", action = "DecreaseFontSize" },
+]
