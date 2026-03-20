@@ -818,10 +818,10 @@ mod tests {
 
     #[test]
     fn skip_dead_cell() {
-        let term = mock_term("cutty");
+        let term = mock_term("terminal");
 
         // Make sure dead state cell is skipped when reversing.
-        let mut regex = RegexSearch::new("alacrit").unwrap();
+        let mut regex = RegexSearch::new("termina").unwrap();
         let start = Point::new(Line(0), Column(0));
         let end = Point::new(Line(0), Column(6));
         assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=end));

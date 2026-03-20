@@ -1,4 +1,4 @@
-sh-5.2$ cat alacritty? _tir  erminal/tests/ref/hyperlinks/alacritty.recording
+sh-5.2$ cat cutty? _tir  erminal/tests/ref/hyperlinks/cutty.recording
 [?2004hsh-5.1$ [7mprintf '\e]8;;https://example.com\e\\foo\e]8;;\e\\\n'[27m[C[C[C[C[C[C[C[Cprintf '\e]8;;https://example.com\e\\foo\e]8;;\e\\\n'
 [?2004l]8;;https://example.com\foo]8;;\
 [?2004hsh-5.1$ [7mprintf '\e]8;;https://example.com\e\\foo\e]8;;\e\\\n'[27m[C[C[C[C[C[C[C[Cprintf '\e]8;;https://example.com\e\\foo\e]8;;\e\\\n'

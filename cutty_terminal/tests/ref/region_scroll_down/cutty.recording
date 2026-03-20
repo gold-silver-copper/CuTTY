@@ -4,20 +4,20 @@ test
 total 12K
 drwxr-xr-x  2 undeadleech undeadleech 4.0K Jun 24 23:58 [0m[34m.[0m
 drwxr-xr-x 37 undeadleech undeadleech 4.0K Jun 24 23:57 [34m..[0m
--rw-r--r--  1 undeadleech undeadleech 1.3K Jun 24 23:58 [32malacritty.recording[0m
+-rw-r--r--  1 undeadleech undeadleech 1.3K Jun 24 23:58 [32mcutty.recording[0m
 [1m[7m%[27m[1m[0m                                                                                                                    [0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[?2004hls -lah[?2004l
 total 12K
 drwxr-xr-x  2 undeadleech undeadleech 4.0K Jun 24 23:58 [0m[34m.[0m
 drwxr-xr-x 37 undeadleech undeadleech 4.0K Jun 24 23:57 [34m..[0m
--rw-r--r--  1 undeadleech undeadleech 1.9K Jun 24 23:58 [32malacritty.recording[0m
+-rw-r--r--  1 undeadleech undeadleech 1.9K Jun 24 23:58 [32mcutty.recording[0m
 [1m[7m%[27m[1m[0m                                                                                                                    [0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[0m[27m[24m[J[38;5;0;48;5;9m UL [0m[38;5;7;48;5;8m ~/…/tests/ref/region_scroll_… [0m[38;5;0;48;5;9m scroll_down [0m [K[?2004hl[37ms -lah[39ml[39ms[39m [39m-[39ml[39ma[39mh [37mbin/snapshot[39m[12D[39m.[37mu[37mn[37md[37mo[37m/[39m[39m [39m [39m [39m [39m [39m [11D[39m.[37m/[37mm[37mo[37mv[39m[39m/[39m.[37m.[39m[39m [39m./../..[?2004l
 total 300K
 drwxr-xr-x 15 undeadleech undeadleech 4.0K Jun 24 23:53 [0m[34m.[0m
 drwxr-xr-x 34 undeadleech undeadleech 4.0K Jun 18 03:26 [34m..[0m
 -rw-r--r--  1 undeadleech undeadleech   10 Feb  8  2019 [32m.agignore[0m
-drwxr-xr-x  3 undeadleech undeadleech 4.0K Jun 24 23:24 [34malacritty[0m
-drwxr-xr-x  4 undeadleech undeadleech 4.0K Jun 24 23:24 [34malacritty_terminal[0m
--rw-r--r--  1 undeadleech undeadleech  21K Jun 24 23:24 [32malacritty.yml[0m
+drwxr-xr-x  3 undeadleech undeadleech 4.0K Jun 24 23:24 [34mcutty[0m
+drwxr-xr-x  4 undeadleech undeadleech 4.0K Jun 24 23:24 [34mcutty_terminal[0m
+-rw-r--r--  1 undeadleech undeadleech  21K Jun 24 23:24 [32mcutty.toml[0m
 drwxr-xr-x  2 undeadleech undeadleech 4.0K Jun 24 18:47 [34m.builds[0m
 -rw-r--r--  1 undeadleech undeadleech 116K Jun 24 23:24 [32mCargo.lock[0m
 -rw-r--r--  1 undeadleech undeadleech  141 Jun 23 21:20 [32mCargo.toml[0m

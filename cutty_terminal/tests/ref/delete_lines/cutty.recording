@@ -1,12 +1,12 @@
-[undeadleech@archhq alacritty]$ ls -lah
+[undeadleech@archhq cutty]$ ls -lah
 total 240K
 drwxr-xr-x 17 undeadleech undeadleech  620 Nov 15 21:10 .
 drwxrwxrwt 12 root        root         300 Nov 15 21:08 ..
 -rw-r--r--  1 undeadleech undeadleech   10 Nov 15 20:33 .agignore
-drwxr-xr-x  3 undeadleech undeadleech  100 Nov 15 20:33 alacritty
--rw-r--r--  1 undeadleech undeadleech   41 Nov 15 21:10 alacritty.recording
-drwxr-xr-x  4 undeadleech undeadleech  120 Nov 15 20:33 alacritty_terminal
--rw-r--r--  1 undeadleech undeadleech  17K Nov 15 20:33 alacritty.yml
+drwxr-xr-x  3 undeadleech undeadleech  100 Nov 15 20:33 cutty
+-rw-r--r--  1 undeadleech undeadleech   41 Nov 15 21:10 cutty.recording
+drwxr-xr-x  4 undeadleech undeadleech  120 Nov 15 20:33 cutty_terminal
+-rw-r--r--  1 undeadleech undeadleech  17K Nov 15 20:33 cutty.toml
 -rw-r--r--  1 undeadleech undeadleech 128K Nov 15 20:33 Cargo.lock
 -rw-r--r--  1 undeadleech undeadleech  245 Nov 15 20:33 Cargo.toml
 -rw-r--r--  1 undeadleech undeadleech  22K Nov 15 20:38 CHANGELOG.md
@@ -31,8 +31,8 @@ drwxr-xr-x  3 undeadleech undeadleech  100 Nov 15 20:33 servo-freetype-proxy
 drwxr-xr-x  3 undeadleech undeadleech   80 Nov 15 20:36 target
 -rw-r--r--  1 undeadleech undeadleech 1.7K Nov 15 20:33 .travis.yml
 drwxr-xr-x  3 undeadleech undeadleech  100 Nov 15 20:33 winpty
-[undeadleech@archhq alacritty]$ echo -[ "[K[K[Ke "\e[10H"
+[undeadleech@archhq cutty]$ echo -[ "[K[K[Ke "\e[10H"
 [10H
-[undeadleech@archhq alacritty]$ echo -e "\e[1000M"
+[undeadleech@archhq cutty]$ echo -e "\e[1000M"
 [1000M
-[undeadleech@archhq alacritty]$ 
+[undeadleech@archhq cutty]$ 
