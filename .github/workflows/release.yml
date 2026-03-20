@@ -91,3 +91,19 @@ jobs:
           ./.github/workflows/upload_asset.sh ./extra/completions/_cutty $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./extra/linux/CuTTY.desktop $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./extra/cutty.info $GITHUB_TOKEN
+
+  crates_io:
+    if: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev python3
+      - name: Publish crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: bash ./publish.sh

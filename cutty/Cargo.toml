@@ -1,6 +1,6 @@
 [package]
 name = "cutty"
-version = "0.17.0-dev"
+version = "0.17.1"
 authors = ["Christian Duerr <contact@christianduerr.com>", "Joe Wilm <joe@jwilm.com>"]
 license = "Apache-2.0"
 description = "A fast, cross-platform GPU terminal emulator"
@@ -13,15 +13,15 @@ rust-version.workspace = true
 
 [dependencies.cutty_terminal]
 path = "../cutty_terminal"
-version = "0.25.2-dev"
+version = "0.25.3"
 
 [dependencies.cutty_config_derive]
 path = "../cutty_config_derive"
-version = "0.2.6-dev"
+version = "0.2.7"
 
 [dependencies.cutty_config]
 path = "../cutty_config"
-version = "0.2.4-dev"
+version = "0.2.5"
 
 [dependencies]
 ahash = { version = "0.8.6", features = ["no-rng"] }

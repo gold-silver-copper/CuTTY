@@ -532,7 +532,7 @@ dependencies = [
 
 [[package]]
 name = "cutty"
-version = "0.17.0-dev"
+version = "0.17.1"
 dependencies = [
  "ahash",
  "bitflags 2.9.4",
@@ -572,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "cutty_config"
-version = "0.2.4-dev"
+version = "0.2.5"
 dependencies = [
  "log",
  "serde",
@@ -581,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "cutty_config_derive"
-version = "0.2.6-dev"
+version = "0.2.7"
 dependencies = [
  "cutty_config",
  "log",
@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "cutty_terminal"
-version = "0.25.2-dev"
+version = "0.25.3"
 dependencies = [
  "base64",
  "bitflags 2.9.4",
