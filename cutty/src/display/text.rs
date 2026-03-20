@@ -1,9 +1,11 @@
-use std::array;
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::{array, env};
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
+use parley::fontique::{FallbackKey, FamilyId};
 use parley::layout::PositionedLayoutItem;
+use parley::swash::text::Codepoint as _;
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStack, FontStyle as ParleyFontStyle,
     FontWeight, GenericFamily, Layout, LayoutContext, LineHeight, StyleProperty,
@@ -56,18 +58,26 @@ pub struct TextSystem {
     font_cx: FontContext,
     layout_cx: LayoutContext<()>,
     metrics: TextMetrics,
+    locale: Option<String>,
+    fallback_search_families: Arc<[FamilyId]>,
+    checked_fallbacks: AHashSet<(FallbackKey, char)>,
     family_stacks: [Arc<[FontFamily<'static>]>; 4],
     cache: AHashMap<LayoutKey, Arc<Layout<()>>>,
 }
 
 impl TextSystem {
     pub fn new(font: Font) -> Self {
+        let mut font_cx = FontContext::default();
+        let fallback_search_families = fallback_search_families(&mut font_cx);
         let mut text_system = Self {
             family_stacks: family_stacks_for_font(&font),
             font,
-            font_cx: FontContext::default(),
+            font_cx,
             layout_cx: LayoutContext::default(),
             metrics: TextMetrics::default(),
+            locale: text_locale(),
+            fallback_search_families,
+            checked_fallbacks: AHashSet::default(),
             cache: AHashMap::new(),
         };
         text_system.metrics = text_system.measure_metrics();
@@ -82,6 +92,7 @@ impl TextSystem {
         self.font = font;
         self.family_stacks = family_stacks_for_font(&self.font);
         self.metrics = self.measure_metrics();
+        self.checked_fallbacks.clear();
         self.cache.clear();
     }
 
@@ -130,6 +141,10 @@ impl TextSystem {
     }
 
     fn shape_char(&mut self, character: char, variant: FontVariant) -> Arc<Layout<()>> {
+        let mut buffer = [0; 4];
+        let text = character.encode_utf8(&mut buffer);
+        self.ensure_fontique_fallbacks(text);
+
         let key = LayoutKey {
             text: LayoutTextKey::Char(character),
             variant,
@@ -139,12 +154,12 @@ impl TextSystem {
             return Arc::clone(layout);
         }
 
-        let mut buffer = [0; 4];
-        let text = character.encode_utf8(&mut buffer);
         self.build_and_cache_layout(key, text, variant)
     }
 
     fn shape_text(&mut self, text: String, variant: FontVariant) -> Arc<Layout<()>> {
+        self.ensure_fontique_fallbacks(&text);
+
         let key = LayoutKey {
             text: LayoutTextKey::String(text.clone().into_boxed_str()),
             variant,
@@ -171,6 +186,7 @@ impl TextSystem {
         builder.push_default(StyleProperty::FontSize(self.font.size().as_px()));
         builder.push_default(StyleProperty::FontStyle(font_style));
         builder.push_default(StyleProperty::FontWeight(font_weight));
+        builder.push_default(StyleProperty::Locale(self.locale.as_deref()));
         builder.push_default(LineHeight::Absolute(self.metrics.cell_height));
 
         let mut layout = builder.build(text);
@@ -189,6 +205,7 @@ impl TextSystem {
         let mut builder = self.layout_cx.ranged_builder(&mut self.font_cx, sample, 1.0, true);
         builder.push_default(FontStack::from(&family[..]));
         builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::Locale(self.locale.as_deref()));
 
         let mut layout = builder.build(sample);
         layout.break_all_lines(None);
@@ -222,6 +239,105 @@ impl TextSystem {
     #[cfg(test)]
     fn cache_len(&self) -> usize {
         self.cache.len()
+    }
+
+    fn ensure_fontique_fallbacks(&mut self, text: &str) {
+        let mut changed = false;
+
+        for character in text.chars() {
+            let Some(key) = self.fallback_key_for_char(character) else {
+                continue;
+            };
+
+            if !self.checked_fallbacks.insert((key, character)) {
+                continue;
+            }
+
+            if self.fallbacks_support_character(key, character) {
+                continue;
+            }
+
+            changed |= self.seed_fontique_fallbacks(key, character);
+        }
+
+        if changed {
+            self.checked_fallbacks.clear();
+            self.cache.clear();
+        }
+    }
+
+    fn fallback_key_for_char(&self, character: char) -> Option<FallbackKey> {
+        let script = fontique_script_for_char(character)?;
+        let localized = self.locale.as_deref().map(|locale| FallbackKey::from((script, locale)));
+        match localized {
+            Some(key) if key.is_tracked() => Some(key),
+            _ => Some(FallbackKey::from(script)),
+        }
+    }
+
+    fn fallbacks_support_character(&mut self, key: FallbackKey, character: char) -> bool {
+        let fallback_families = self.font_cx.collection.fallback_families(key).collect::<Vec<_>>();
+        let mut buffer = [0; 4];
+        let character_text = character.encode_utf8(&mut buffer);
+        fallback_families
+            .into_iter()
+            .any(|family_id| self.family_supports_text(family_id, character_text))
+    }
+
+    fn seed_fontique_fallbacks(&mut self, key: FallbackKey, character: char) -> bool {
+        let fallback_families = self.find_fallback_families(key.script(), character);
+        if fallback_families.is_empty() {
+            return false;
+        }
+
+        self.font_cx.collection.append_fallbacks(key, fallback_families.into_iter())
+    }
+
+    fn find_fallback_families(
+        &mut self,
+        script: parley::fontique::Script,
+        character: char,
+    ) -> Vec<FamilyId> {
+        let mut character_buffer = [0; 4];
+        let character_text = character.encode_utf8(&mut character_buffer);
+        let sample_text = script.sample().unwrap_or(character_text);
+        let use_sample_text = sample_text != character_text;
+        let search_families = self.fallback_search_families.to_vec();
+
+        let mut preferred = Vec::new();
+        let mut fallback_only = Vec::new();
+        for family_id in search_families {
+            if !self.family_supports_text(family_id, character_text) {
+                continue;
+            }
+
+            if use_sample_text && self.family_supports_text(family_id, sample_text) {
+                preferred.push(family_id);
+            } else {
+                fallback_only.push(family_id);
+            }
+        }
+
+        preferred.extend(fallback_only);
+        preferred
+    }
+
+    fn family_supports_text(&mut self, family_id: FamilyId, text: &str) -> bool {
+        let Some(family) = self.font_cx.collection.family(family_id) else {
+            return false;
+        };
+
+        family.fonts().iter().any(|font| {
+            let Some(data) = font.load(Some(&mut self.font_cx.source_cache)) else {
+                return false;
+            };
+            let Some(charmap) = font.charmap_index().charmap(data.as_ref()) else {
+                return false;
+            };
+
+            text.chars()
+                .all(|character| charmap.map(character).is_some_and(|glyph_id| glyph_id != 0))
+        })
     }
 }
 
@@ -333,6 +449,74 @@ fn push_family_name(families: &mut Vec<FontFamily<'static>>, family: FontFamily<
     }
 }
 
+fn fallback_search_families(font_cx: &mut FontContext) -> Arc<[FamilyId]> {
+    let mut families = Vec::new();
+    let mut seen = AHashSet::default();
+
+    for generic_family in [
+        GenericFamily::UiMonospace,
+        GenericFamily::Monospace,
+        GenericFamily::SystemUi,
+        GenericFamily::Emoji,
+    ] {
+        for family_id in font_cx.collection.generic_families(generic_family) {
+            if seen.insert(family_id) {
+                families.push(family_id);
+            }
+        }
+    }
+
+    let mut family_names = font_cx.collection.family_names().map(str::to_owned).collect::<Vec<_>>();
+    family_names.sort_unstable_by_key(|family_name| family_name_sort_key(family_name));
+    family_names.dedup();
+
+    for family_name in family_names {
+        let Some(family_id) = font_cx.collection.family_id(&family_name) else {
+            continue;
+        };
+        if seen.insert(family_id) {
+            families.push(family_id);
+        }
+    }
+
+    Arc::from(families)
+}
+
+fn family_name_sort_key(family_name: &str) -> (bool, String) {
+    (family_name.starts_with('.'), family_name.to_ascii_lowercase())
+}
+
+fn text_locale() -> Option<String> {
+    ["LC_ALL", "LC_CTYPE", "LANG"]
+        .into_iter()
+        .find_map(|key| env::var(key).ok())
+        .and_then(|value| normalize_locale(&value))
+}
+
+fn normalize_locale(locale: &str) -> Option<String> {
+    let locale = locale.trim();
+    if locale.is_empty() || matches!(locale, "C" | "POSIX") {
+        return None;
+    }
+
+    let locale = locale.split_once('.').map(|(locale, _)| locale).unwrap_or(locale);
+    let locale = locale.split_once('@').map(|(locale, _)| locale).unwrap_or(locale);
+    let locale = locale.replace('_', "-");
+
+    if locale.is_empty() { None } else { Some(locale) }
+}
+
+fn fontique_script_for_char(character: char) -> Option<parley::fontique::Script> {
+    let tag = character.script().to_opentype();
+    let mut bytes = [(tag >> 24) as u8, (tag >> 16) as u8, (tag >> 8) as u8, tag as u8];
+    bytes[0] = bytes[0].to_ascii_uppercase();
+    bytes[1] = bytes[1].to_ascii_lowercase();
+    bytes[2] = bytes[2].to_ascii_lowercase();
+    bytes[3] = bytes[3].to_ascii_lowercase();
+    let script = parley::fontique::Script(bytes);
+    (!matches!(&script.0, b"Zyyy" | b"Zinh" | b"Zzzz")).then_some(script)
+}
+
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
@@ -340,9 +524,14 @@ mod tests {
 
     use cutty_terminal::index::Point;
     use cutty_terminal::term::cell::Flags;
+    use parley::fontique::{FallbackKey, Script};
+    use parley::layout::PositionedLayoutItem;
     use parley::{FontFamily, GenericFamily};
 
-    use super::{FontVariant, TextSystem, font_family_stack, push_configured_family_names};
+    use super::{
+        FontVariant, TextSystem, family_name_sort_key, font_family_stack, fontique_script_for_char,
+        normalize_locale, push_configured_family_names,
+    };
     use crate::config::font::Font;
     use crate::display::color::Rgb;
     use crate::display::content::RenderableCell;
@@ -420,6 +609,32 @@ mod tests {
     }
 
     #[test]
+    fn locale_normalization_strips_encoding_and_uses_bcp47_separators() {
+        assert_eq!(normalize_locale("ja_JP.UTF-8"), Some(String::from("ja-JP")));
+        assert_eq!(
+            normalize_locale("zh_Hans_CN@calendar=gregorian"),
+            Some(String::from("zh-Hans-CN"))
+        );
+        assert_eq!(normalize_locale("C"), None);
+    }
+
+    #[test]
+    fn character_scripts_are_mapped_to_fontique_tags() {
+        assert_eq!(fontique_script_for_char('今'), Some(Script::from("Hani")));
+        assert_eq!(fontique_script_for_char('あ'), Some(Script::from("Hira")));
+        assert_eq!(fontique_script_for_char('한'), Some(Script::from("Hang")));
+        assert_eq!(fontique_script_for_char('!'), None);
+    }
+
+    #[test]
+    fn hidden_family_names_sort_after_visible_names() {
+        assert!(
+            family_name_sort_key("Apple SD Gothic Neo")
+                < family_name_sort_key(".Apple SD Gothic Neo")
+        );
+    }
+
+    #[test]
     fn invalid_css_family_spec_falls_back_to_literal_name() {
         let mut families = Vec::new();
 
@@ -440,5 +655,88 @@ mod tests {
         assert!(families.contains(&GenericFamily::SystemUi.into()));
         assert!(families.contains(&GenericFamily::Emoji.into()));
         assert!(!families.is_empty());
+    }
+
+    #[test]
+    fn untracked_han_locale_falls_back_to_script_default_key() {
+        let mut text = TextSystem::new(Font::default());
+        text.locale = Some(String::from("en-US"));
+
+        let key = text.fallback_key_for_char('今').expect("han fallback key");
+
+        assert_eq!(key, FallbackKey::from(Script::from("Hani")));
+        assert!(key.is_tracked());
+        assert!(key.is_default());
+    }
+
+    fn selected_run_font<'a>(text: &'a mut TextSystem, content: &str) -> Option<parley::FontData> {
+        let layout = text.shape_string(content.to_owned(), false, false)?;
+        layout.lines().find_map(|line| {
+            line.items().find_map(|item| match item {
+                PositionedLayoutItem::GlyphRun(glyph_run) => Some(glyph_run.run().font().clone()),
+                _ => None,
+            })
+        })
+    }
+
+    fn selected_family_name(text: &mut TextSystem, content: &str) -> Option<String> {
+        let target = selected_run_font(text, content)?;
+        let family_names = text.font_cx.collection.family_names().map(str::to_owned).collect::<Vec<_>>();
+        for family_name in family_names {
+            let Some(family_id) = text.font_cx.collection.family_id(&family_name) else {
+                continue;
+            };
+            let Some(family) = text.font_cx.collection.family(family_id) else {
+                continue;
+            };
+            if family.fonts().iter().any(|font| {
+                font.index() == target.index
+                    && font
+                        .load(Some(&mut text.font_cx.source_cache))
+                        .is_some_and(|data| data.as_ref() == target.data.as_ref())
+            }) {
+                return Some(family.name().to_owned());
+            }
+        }
+        None
+    }
+
+    fn family_glyph_id_for(text: &mut TextSystem, family_name: &str, character: char) -> Option<u32> {
+        let family_id = text.font_cx.collection.family_id(family_name)?;
+        let family = text.font_cx.collection.family(family_id)?;
+        family.fonts().iter().find_map(|font| {
+            let data = font.load(Some(&mut text.font_cx.source_cache))?;
+            let charmap = font.charmap_index().charmap(data.as_ref())?;
+            charmap.map(character)
+        })
+    }
+
+    fn first_layout_glyph_id(text: &mut TextSystem, content: &str) -> Option<u32> {
+        let layout = text.shape_string(content.to_owned(), false, false)?;
+        layout.lines().find_map(|line| {
+            line.items().find_map(|item| match item {
+                PositionedLayoutItem::GlyphRun(glyph_run) => glyph_run.glyphs().next().map(|glyph| glyph.id),
+                _ => None,
+            })
+        })
+    }
+
+    #[test]
+    #[ignore = "diagnostic helper"]
+    fn debug_cjk_sample_glyphs() {
+        let mut text = TextSystem::new(Font::default());
+        for character in "今語漢あア한글".chars() {
+            let family = selected_family_name(&mut text, &character.to_string());
+            let layout = first_layout_glyph_id(&mut text, &character.to_string());
+            let family_glyph = family
+                .as_deref()
+                .and_then(|family_name| family_glyph_id_for(&mut text, family_name, character));
+            let square = family
+                .as_deref()
+                .and_then(|family_name| family_glyph_id_for(&mut text, family_name, '□'));
+            println!(
+                "char={character:?} family={family:?} layout={layout:?} family_glyph={family_glyph:?} square={square:?}"
+            );
+        }
     }
 }

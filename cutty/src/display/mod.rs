@@ -855,12 +855,7 @@ impl Display {
                     .normalized_coords(run.normalized_coords())
                     .draw(
                         Fill::NonZero,
-                        glyph_run.glyphs().map(|glyph| {
-                            let gx = x + glyph.x;
-                            let gy = y + glyph.y;
-                            x += glyph.advance;
-                            Glyph { id: glyph.id, x: gx, y: gy }
-                        }),
+                        glyph_run.glyphs().map(|glyph| scene_glyph_from_layout(&mut x, y, glyph)),
                     );
             }
         }
@@ -1180,6 +1175,34 @@ impl Display {
         let timer_id = TimerId::new(Topic::Frame, window_id);
         let event = Event::new(EventType::Frame, window_id);
         scheduler.schedule(event, swap_timeout, false, timer_id);
+    }
+}
+
+fn scene_glyph_from_layout(
+    cursor_x: &mut f32,
+    baseline: f32,
+    glyph: parley::layout::Glyph,
+) -> Glyph {
+    let positioned = Glyph { id: glyph.id, x: *cursor_x + glyph.x, y: baseline - glyph.y };
+    *cursor_x += glyph.advance;
+    positioned
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scene_glyph_from_layout;
+
+    #[test]
+    fn scene_glyphs_use_baseline_relative_y_coordinates() {
+        let mut cursor_x = 10.0;
+        let glyph = parley::layout::Glyph { id: 42, style_index: 0, x: 1.5, y: 2.0, advance: 8.0 };
+
+        let positioned = scene_glyph_from_layout(&mut cursor_x, 20.0, glyph);
+
+        assert_eq!(positioned.id, 42);
+        assert_eq!(positioned.x, 11.5);
+        assert_eq!(positioned.y, 18.0);
+        assert_eq!(cursor_x, 18.0);
     }
 }
 
