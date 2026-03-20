@@ -121,12 +121,27 @@ fn ref_test(dir: &Path) {
     term_grid.truncate();
 
     if grid != term_grid {
-        for i in 0..grid.total_lines() {
-            for j in 0..grid.columns() {
-                let cell = &term_grid[Line(i as i32)][Column(j)];
-                let original_cell = &grid[Line(i as i32)][Column(j)];
-                if original_cell != cell {
-                    println!("[{i}][{j}] {original_cell:?} => {cell:?}",);
+        if grid.total_lines() != term_grid.total_lines() || grid.columns() != term_grid.columns() {
+            println!(
+                "grid shape mismatch: expected lines={}, cols={}; actual lines={}, cols={}",
+                grid.total_lines(),
+                grid.columns(),
+                term_grid.total_lines(),
+                term_grid.columns()
+            );
+        }
+
+        let topmost_line = std::cmp::min(grid.topmost_line(), term_grid.topmost_line());
+        let bottommost_line = std::cmp::max(grid.bottommost_line(), term_grid.bottommost_line());
+        let max_columns = std::cmp::max(grid.columns(), term_grid.columns());
+
+        for line in topmost_line.0..=bottommost_line.0 {
+            for column in 0..max_columns {
+                let actual = grid_cell(&term_grid, Line(line), Column(column));
+                let expected = grid_cell(&grid, Line(line), Column(column));
+
+                if expected != actual {
+                    println!("[{line}][{column}] {expected:?} => {actual:?}");
                 }
             }
         }
@@ -135,4 +150,15 @@ fn ref_test(dir: &Path) {
     }
 
     assert_eq!(grid, term_grid);
+}
+
+fn grid_cell(grid: &Grid<Cell>, line: Line, column: Column) -> Option<&Cell> {
+    let topmost = grid.topmost_line();
+    let bottommost = grid.bottommost_line();
+
+    if line < topmost || line > bottommost || column.0 >= grid.columns() {
+        None
+    } else {
+        Some(&grid[line][column])
+    }
 }
