@@ -199,14 +199,13 @@ impl RenderLines {
         }
 
         let lines = &mut self.inner[line_flag_index(flag)];
-        if let Some(line) = lines.last_mut() {
-            if color == line.color
-                && cell.point.column == line.end.column + 1
-                && cell.point.line == line.end.line
-            {
-                line.end = end;
-                return;
-            }
+        if let Some(line) = lines.last_mut()
+            && color == line.color
+            && cell.point.column == line.end.column + 1
+            && cell.point.line == line.end.line
+        {
+            line.end = end;
+            return;
         }
 
         let line = RenderLine { start: cell.point, end, color };

@@ -409,13 +409,13 @@ impl<T: EventListener> Execute<T> for Action {
             #[cfg(target_os = "macos")]
             Action::CreateNewWindow => ctx.create_new_window(None),
             #[cfg(target_os = "macos")]
-            Action::CreateNewTab => {
+            Action::CreateNewTab if ctx.config().window.decorations != Decorations::None => {
                 // Tabs on macOS are not possible without decorations.
-                if ctx.config().window.decorations != Decorations::None {
-                    let tabbing_id = Some(ctx.window().tabbing_id());
-                    ctx.create_new_window(tabbing_id);
-                }
+                let tabbing_id = Some(ctx.window().tabbing_id());
+                ctx.create_new_window(tabbing_id);
             },
+            #[cfg(target_os = "macos")]
+            Action::CreateNewTab => (),
             #[cfg(target_os = "macos")]
             Action::SelectNextTab => ctx.window().select_next_tab(),
             #[cfg(target_os = "macos")]

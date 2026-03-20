@@ -222,12 +222,12 @@ impl ApplicationHandler<Event> for Processor {
             return;
         }
 
-        if let Some(window_options) = self.initial_window_options.take() {
-            if let Err(err) = self.create_initial_window(event_loop, window_options) {
-                self.initial_window_error = Some(err);
-                event_loop.exit();
-                return;
-            }
+        if let Some(window_options) = self.initial_window_options.take()
+            && let Err(err) = self.create_initial_window(event_loop, window_options)
+        {
+            self.initial_window_error = Some(err);
+            event_loop.exit();
+            return;
         }
 
         info!("Initialisation complete");
@@ -1850,16 +1850,15 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                         self.ctx.display.visual_bell.ring();
 
                         // Execute bell command.
-                        if let Some(bell_command) = &self.ctx.config.bell.command {
-                            if self
+                        if let Some(bell_command) = &self.ctx.config.bell.command
+                            && self
                                 .ctx
                                 .prev_bell_cmd
                                 .is_none_or(|i| i.elapsed() >= BELL_CMD_COOLDOWN)
-                            {
-                                self.ctx.spawn_daemon(bell_command.program(), bell_command.args());
+                        {
+                            self.ctx.spawn_daemon(bell_command.program(), bell_command.args());
 
-                                *self.ctx.prev_bell_cmd = Some(Instant::now());
-                            }
+                            *self.ctx.prev_bell_cmd = Some(Instant::now());
                         }
                     },
                     TerminalEvent::ClipboardStore(clipboard_type, content) => {

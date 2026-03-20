@@ -689,7 +689,7 @@ mod tests {
         assert!(key.is_default());
     }
 
-    fn selected_run_font<'a>(text: &'a mut TextSystem, content: &str) -> Option<parley::FontData> {
+    fn selected_run_font(text: &mut TextSystem, content: &str) -> Option<parley::FontData> {
         let layout = text.shape_string(content.to_owned(), false, false)?;
         layout.lines().find_map(|line| {
             line.items().find_map(|item| match item {

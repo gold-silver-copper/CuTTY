@@ -625,18 +625,15 @@ impl Display {
                 },
             };
 
-            if self.ime.is_enabled() {
-                if let Some(point) = ime_position {
-                    let (fg, bg) = if search_state.regex().is_some() {
-                        (
-                            config.colors.footer_bar_foreground(),
-                            config.colors.footer_bar_background(),
-                        )
-                    } else {
-                        (foreground_color, background_color)
-                    };
-                    self.draw_ime_preview(&mut scene, point, fg, bg, &mut rects, config);
-                }
+            if self.ime.is_enabled()
+                && let Some(point) = ime_position
+            {
+                let (fg, bg) = if search_state.regex().is_some() {
+                    (config.colors.footer_bar_foreground(), config.colors.footer_bar_background())
+                } else {
+                    (foreground_color, background_color)
+                };
+                self.draw_ime_preview(&mut scene, point, fg, bg, &mut rects, config);
             }
 
             if let Some(message) = message_buffer.message() {
