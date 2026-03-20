@@ -83,7 +83,8 @@ jobs:
           fetch-depth: 0
       - name: Install dependencies
         run: |
-          sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev \
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libfreetype6-dev libfontconfig1-dev \
             libxcb-xfixes0-dev libxkbcommon-dev python3 scdoc
       - name: Test
         run: cargo test --release
