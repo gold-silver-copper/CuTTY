@@ -1,6 +1,5 @@
-use std::collections::HashMap;
+use std::array;
 
-use ahash::RandomState;
 use vello::Scene;
 use vello::kurbo::{Affine, BezPath, Rect, Stroke};
 use vello::peniko::Fill;
@@ -143,9 +142,23 @@ impl RenderLine {
     }
 }
 
-#[derive(Default)]
 pub struct RenderLines {
-    inner: HashMap<Flags, Vec<RenderLine>, RandomState>,
+    inner: [Vec<RenderLine>; LINE_FLAGS.len()],
+}
+
+const LINE_FLAGS: [Flags; 6] = [
+    Flags::UNDERLINE,
+    Flags::DOUBLE_UNDERLINE,
+    Flags::STRIKEOUT,
+    Flags::UNDERCURL,
+    Flags::DOTTED_UNDERLINE,
+    Flags::DASHED_UNDERLINE,
+];
+
+impl Default for RenderLines {
+    fn default() -> Self {
+        Self { inner: array::from_fn(|_| Vec::new()) }
+    }
 }
 
 impl RenderLines {
@@ -154,12 +167,14 @@ impl RenderLines {
     }
 
     pub fn rects(&self, metrics: &TextMetrics, size: &SizeInfo) -> Vec<RenderRect> {
-        self.inner
-            .iter()
-            .flat_map(|(flag, lines)| {
-                lines.iter().flat_map(move |line| line.rects(metrics, size, *flag))
-            })
-            .collect()
+        let mut rects = Vec::with_capacity(self.inner.iter().map(Vec::len).sum::<usize>());
+        for (index, lines) in self.inner.iter().enumerate() {
+            let flag = LINE_FLAGS[index];
+            for line in lines {
+                rects.extend(line.rects(metrics, size, flag));
+            }
+        }
+        rects
     }
 
     pub fn update(&mut self, cell: &RenderableCell) {
@@ -183,7 +198,8 @@ impl RenderLines {
             end.column += 1;
         }
 
-        if let Some(line) = self.inner.get_mut(&flag).and_then(|lines| lines.last_mut()) {
+        let lines = &mut self.inner[line_flag_index(flag)];
+        if let Some(line) = lines.last_mut() {
             if color == line.color
                 && cell.point.column == line.end.column + 1
                 && cell.point.line == line.end.line
@@ -194,7 +210,19 @@ impl RenderLines {
         }
 
         let line = RenderLine { start: cell.point, end, color };
-        self.inner.entry(flag).or_default().push(line);
+        lines.push(line);
+    }
+}
+
+fn line_flag_index(flag: Flags) -> usize {
+    match flag {
+        Flags::UNDERLINE => 0,
+        Flags::DOUBLE_UNDERLINE => 1,
+        Flags::STRIKEOUT => 2,
+        Flags::UNDERCURL => 3,
+        Flags::DOTTED_UNDERLINE => 4,
+        Flags::DASHED_UNDERLINE => 5,
+        _ => unreachable!("invalid line flag"),
     }
 }
 

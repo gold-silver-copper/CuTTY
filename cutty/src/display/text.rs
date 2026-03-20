@@ -96,10 +96,6 @@ impl TextSystem {
         self.cache.clear();
     }
 
-    pub fn clear_cache(&mut self) {
-        self.cache.clear();
-    }
-
     pub fn shape_cell(&mut self, cell: &RenderableCell) -> Option<Arc<Layout<()>>> {
         if cell.flags.contains(Flags::HIDDEN) {
             return None;
@@ -116,6 +112,7 @@ impl TextSystem {
         }
     }
 
+    #[cfg(test)]
     pub fn shape_string(
         &mut self,
         text: impl Into<String>,
@@ -127,17 +124,21 @@ impl TextSystem {
             return None;
         }
 
-        let variant = match (bold, italic) {
-            (true, true) => FontVariant::BoldItalic,
-            (true, false) => FontVariant::Bold,
-            (false, true) => FontVariant::Italic,
-            (false, false) => FontVariant::Normal,
-        };
+        let variant = font_variant_from_style(bold, italic);
         if let Some(character) = single_char(&text) {
             Some(self.shape_char(character, variant))
         } else {
             Some(self.shape_text(text, variant))
         }
+    }
+
+    pub fn shape_character(
+        &mut self,
+        character: char,
+        bold: bool,
+        italic: bool,
+    ) -> Arc<Layout<()>> {
+        self.shape_char(character, font_variant_from_style(bold, italic))
     }
 
     fn shape_char(&mut self, character: char, variant: FontVariant) -> Arc<Layout<()>> {
@@ -302,11 +303,11 @@ impl TextSystem {
         let character_text = character.encode_utf8(&mut character_buffer);
         let sample_text = script.sample().unwrap_or(character_text);
         let use_sample_text = sample_text != character_text;
-        let search_families = self.fallback_search_families.to_vec();
+        let search_families = Arc::clone(&self.fallback_search_families);
 
         let mut preferred = Vec::new();
         let mut fallback_only = Vec::new();
-        for family_id in search_families {
+        for &family_id in search_families.iter() {
             if !self.family_supports_text(family_id, character_text) {
                 continue;
             }
@@ -352,6 +353,7 @@ impl FontVariant {
     }
 }
 
+#[cfg(test)]
 fn single_char(text: &str) -> Option<char> {
     let mut chars = text.chars();
     let first = chars.next()?;
@@ -359,7 +361,14 @@ fn single_char(text: &str) -> Option<char> {
 }
 
 fn font_variant(flags: Flags) -> FontVariant {
-    match (flags.intersects(Flags::BOLD | Flags::DIM_BOLD), flags.contains(Flags::ITALIC)) {
+    font_variant_from_style(
+        flags.intersects(Flags::BOLD | Flags::DIM_BOLD),
+        flags.contains(Flags::ITALIC),
+    )
+}
+
+fn font_variant_from_style(bold: bool, italic: bool) -> FontVariant {
+    match (bold, italic) {
         (true, true) => FontVariant::BoldItalic,
         (true, false) => FontVariant::Bold,
         (false, true) => FontVariant::Italic,
@@ -572,6 +581,17 @@ mod tests {
     }
 
     #[test]
+    fn direct_character_shaping_reuses_cached_layout() {
+        let mut text = TextSystem::new(Font::default());
+
+        let first = text.shape_character('x', false, false);
+        let second = text.shape_character('x', false, false);
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(text.cache_len(), 1);
+    }
+
+    #[test]
     fn foreground_color_does_not_split_shape_cache() {
         let mut text = TextSystem::new(Font::default());
         let white = Rgb::new(255, 255, 255);
@@ -681,7 +701,8 @@ mod tests {
 
     fn selected_family_name(text: &mut TextSystem, content: &str) -> Option<String> {
         let target = selected_run_font(text, content)?;
-        let family_names = text.font_cx.collection.family_names().map(str::to_owned).collect::<Vec<_>>();
+        let family_names =
+            text.font_cx.collection.family_names().map(str::to_owned).collect::<Vec<_>>();
         for family_name in family_names {
             let Some(family_id) = text.font_cx.collection.family_id(&family_name) else {
                 continue;
@@ -701,7 +722,11 @@ mod tests {
         None
     }
 
-    fn family_glyph_id_for(text: &mut TextSystem, family_name: &str, character: char) -> Option<u32> {
+    fn family_glyph_id_for(
+        text: &mut TextSystem,
+        family_name: &str,
+        character: char,
+    ) -> Option<u32> {
         let family_id = text.font_cx.collection.family_id(family_name)?;
         let family = text.font_cx.collection.family(family_id)?;
         family.fonts().iter().find_map(|font| {
@@ -715,7 +740,9 @@ mod tests {
         let layout = text.shape_string(content.to_owned(), false, false)?;
         layout.lines().find_map(|line| {
             line.items().find_map(|item| match item {
-                PositionedLayoutItem::GlyphRun(glyph_run) => glyph_run.glyphs().next().map(|glyph| glyph.id),
+                PositionedLayoutItem::GlyphRun(glyph_run) => {
+                    glyph_run.glyphs().next().map(|glyph| glyph.id)
+                },
                 _ => None,
             })
         })
@@ -735,7 +762,8 @@ mod tests {
                 .as_deref()
                 .and_then(|family_name| family_glyph_id_for(&mut text, family_name, '□'));
             println!(
-                "char={character:?} family={family:?} layout={layout:?} family_glyph={family_glyph:?} square={square:?}"
+                "char={character:?} family={family:?} layout={layout:?} \
+                 family_glyph={family_glyph:?} square={square:?}"
             );
         }
     }

@@ -252,7 +252,6 @@ impl TermDimensions for SizeInfo {
 pub struct DisplayUpdate {
     pub dirty: bool,
     dimensions: Option<PhysicalSize<u32>>,
-    cursor_dirty: bool,
     font: Option<Font>,
 }
 
@@ -263,10 +262,6 @@ impl DisplayUpdate {
 
     pub fn font(&self) -> Option<&Font> {
         self.font.as_ref()
-    }
-
-    pub fn cursor_dirty(&self) -> bool {
-        self.cursor_dirty
     }
 
     pub fn set_dimensions(&mut self, dimensions: PhysicalSize<u32>) {
@@ -280,7 +275,6 @@ impl DisplayUpdate {
     }
 
     pub fn set_cursor_dirty(&mut self) {
-        self.cursor_dirty = true;
         self.dirty = true;
     }
 }
@@ -415,8 +409,6 @@ impl Display {
             self.text_system.update_font(font);
             metrics = self.text_system.metrics();
             self.damage_tracker.frame().mark_fully_damaged();
-        } else if pending_update.cursor_dirty() {
-            self.text_system.clear_cache();
         }
 
         let (mut width, mut height) = (self.size_info.width(), self.size_info.height());
@@ -672,7 +664,7 @@ impl Display {
                 let fg = config.colors.primary.background;
                 for (i, message_text) in text.iter().enumerate() {
                     let point = Point::new(start_line + i, Column(0));
-                    self.paint_string_cells(&mut scene, point, fg, bg, message_text.chars());
+                    self.paint_string_cells(&mut scene, point, fg, bg, message_text);
                 }
             } else {
                 paint_rects(&mut scene, rects);
@@ -867,35 +859,31 @@ impl Display {
         point: Point<usize>,
         fg: Rgb,
         bg: Rgb,
-        chars: impl Iterator<Item = char>,
+        text: &str,
     ) {
-        let mut column = point.column.0;
-        for character in chars {
-            let width = character.width().unwrap_or(1).max(1);
-            let rect = RenderRect::new(
-                self.size_info.padding_x() + column as f32 * self.size_info.cell_width(),
-                self.size_info.padding_y() + point.line as f32 * self.size_info.cell_height(),
-                self.size_info.cell_width() * width as f32,
-                self.size_info.cell_height(),
-                bg,
-                1.0,
-            );
-            paint_rect(scene, &rect);
+        let text_width = text_cell_width(text);
+        if text_width == 0 {
+            return;
+        }
 
+        let size_info = self.size_info;
+        let metrics = self.text_system.metrics();
+        let mut column = point.column.0;
+        let rect = RenderRect::new(
+            size_info.padding_x() + column as f32 * size_info.cell_width(),
+            size_info.padding_y() + point.line as f32 * size_info.cell_height(),
+            size_info.cell_width() * text_width as f32,
+            size_info.cell_height(),
+            bg,
+            1.0,
+        );
+        paint_rect(scene, &rect);
+
+        for character in text.chars() {
+            let width = char_cell_width(character);
             if !character.is_whitespace() {
-                if let Some(layout) =
-                    self.text_system.shape_string(character.to_string(), false, false)
-                {
-                    Self::paint_layout(
-                        scene,
-                        &layout,
-                        self.text_system.metrics(),
-                        self.size_info,
-                        point.line,
-                        column,
-                        fg,
-                    );
-                }
+                let layout = self.text_system.shape_character(character, false, false);
+                Self::paint_layout(scene, &layout, metrics, size_info, point.line, column, fg);
             }
 
             column += width;
@@ -933,14 +921,14 @@ impl Display {
         }
         .collect();
 
-        let visible_len = visible_text.chars().count();
+        let visible_len = text_cell_width(&visible_text);
         let end = cmp::min(point.column.0 + visible_len, num_cols);
         let start = end.saturating_sub(visible_len);
 
         let start = Point::new(point.line, Column(start));
         let end = Point::new(point.line, Column(end - 1));
 
-        self.paint_string_cells(scene, start, fg, bg, visible_text.chars());
+        self.paint_string_cells(scene, start, fg, bg, &visible_text);
 
         if point.line < self.size_info.screen_lines() {
             let damage = LineDamageBounds::new(start.line, 0, num_cols);
@@ -1047,7 +1035,7 @@ impl Display {
             let damage = LineDamageBounds::new(point.line, point.column.0, num_cols);
             self.damage_tracker.frame().damage_line(damage);
             self.damage_tracker.next_frame().damage_line(damage);
-            self.paint_string_cells(scene, point, fg, bg, uri.chars());
+            self.paint_string_cells(scene, point, fg, bg, &uri);
         }
     }
 
@@ -1060,7 +1048,7 @@ impl Display {
             point,
             config.colors.footer_bar_foreground(),
             config.colors.footer_bar_background(),
-            text.chars(),
+            &text,
         );
     }
 
@@ -1079,7 +1067,7 @@ impl Display {
             point,
             config.colors.primary.background,
             config.colors.normal.red,
-            timing.chars(),
+            &timing,
         );
     }
 
@@ -1104,7 +1092,7 @@ impl Display {
         let bg = colors.line_indicator.background.unwrap_or(colors.primary.foreground);
 
         if obstructed_column.is_none_or(|obstructed_column| obstructed_column < column) {
-            self.paint_string_cells(scene, point, fg, bg, text.chars());
+            self.paint_string_cells(scene, point, fg, bg, &text);
         }
     }
 
@@ -1188,9 +1176,17 @@ fn scene_glyph_from_layout(
     positioned
 }
 
+fn char_cell_width(character: char) -> usize {
+    character.width().unwrap_or(1).max(1)
+}
+
+fn text_cell_width(text: &str) -> usize {
+    text.chars().map(char_cell_width).sum()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::scene_glyph_from_layout;
+    use super::{scene_glyph_from_layout, text_cell_width};
 
     #[test]
     fn scene_glyphs_use_baseline_relative_y_coordinates() {
@@ -1203,6 +1199,13 @@ mod tests {
         assert_eq!(positioned.x, 11.5);
         assert_eq!(positioned.y, 18.0);
         assert_eq!(cursor_x, 18.0);
+    }
+
+    #[test]
+    fn text_cell_width_counts_terminal_columns() {
+        assert_eq!(text_cell_width("abc"), 3);
+        assert_eq!(text_cell_width("今a"), 3);
+        assert_eq!(text_cell_width(""), 0);
     }
 }
 
