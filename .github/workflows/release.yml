@@ -97,8 +97,8 @@ jobs:
           scdoc < extra/man/cutty-escapes.7.scd | gzip -c > "./cutty-escapes.7.gz"
       - name: Upload Assets
         run: |
-          cp ./extra/logo/cutty-term.svg ./CuTTY.svg
-          ./.github/workflows/upload_asset.sh ./CuTTY.svg $GITHUB_TOKEN
+          cp ./extra/logo/cutty-term.png ./CuTTY.png
+          ./.github/workflows/upload_asset.sh ./CuTTY.png $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./cutty.1.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./cutty-msg.1.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./cutty.5.gz $GITHUB_TOKEN
