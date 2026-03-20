@@ -1,0 +1,207 @@
+# Full CuTTY configuration example.
+#
+# Copy this file to one of:
+#   Linux/BSD/macOS: ~/.config/cutty/cutty.toml
+#   Windows:         %APPDATA%\cutty\cutty.toml
+#
+# This file uses only the current canonical TOML schema.
+# It explicitly lists every finite configuration key supported by CuTTY.
+# The [env] table is intentionally open-ended, so treat those entries as examples.
+
+[general]
+import = []
+working_directory = "None"
+live_config_reload = true
+ipc_socket = true
+
+[env]
+TERM_PROGRAM = "CuTTY"
+EDITOR = "nvim"
+
+[window]
+dimensions = { columns = 120, lines = 34 }
+position = { x = 120, y = 80 }
+padding = { x = 8, y = 8 }
+dynamic_padding = false
+decorations = "Full"
+opacity = 0.96
+blur = false
+startup_mode = "Windowed"
+title = "CuTTY"
+dynamic_title = true
+class = { general = "CuTTY", instance = "CuTTY" }
+decorations_theme_variant = "None"
+resize_increments = false
+option_as_alt = "None"
+level = "Normal"
+
+[scrolling]
+history = 10000
+multiplier = 3
+
+[font]
+size = 13.0
+offset = { x = 0, y = 0 }
+glyph_offset = { x = 0, y = 0 }
+
+[font.normal]
+family = "ui-monospace, monospace"
+style = "Regular"
+
+[font.bold]
+family = "ui-monospace, monospace"
+style = "Bold"
+
+[font.italic]
+family = "ui-monospace, monospace"
+style = "Italic"
+
+[font.bold_italic]
+family = "ui-monospace, monospace"
+style = "Bold Italic"
+
+[colors]
+transparent_background_colors = false
+draw_bold_text_with_bright_colors = true
+indexed_colors = [
+  { index = 16, color = "#ff9e64" },
+  { index = 17, color = "#db4b4b" },
+]
+
+[colors.primary]
+foreground = "#c0caf5"
+background = "#111827"
+bright_foreground = "#e5e9f0"
+dim_foreground = "#9aa5ce"
+
+[colors.cursor]
+foreground = "CellBackground"
+background = "CellForeground"
+
+[colors.vi_mode_cursor]
+foreground = "CellBackground"
+background = "#7dcfff"
+
+[colors.search.matches]
+foreground = "#111827"
+background = "#e0af68"
+
+[colors.search.focused_match]
+foreground = "#111827"
+background = "#9ece6a"
+
+[colors.hints.start]
+foreground = "#111827"
+background = "#7dcfff"
+
+[colors.hints.end]
+foreground = "#111827"
+background = "#bb9af7"
+
+[colors.line_indicator]
+foreground = "#111827"
+background = "#7aa2f7"
+
+[colors.footer_bar]
+foreground = "#111827"
+background = "#c0caf5"
+
+[colors.selection]
+foreground = "CellBackground"
+background = "CellForeground"
+
+[colors.normal]
+black = "#1f2335"
+red = "#f7768e"
+green = "#9ece6a"
+yellow = "#e0af68"
+blue = "#7aa2f7"
+magenta = "#bb9af7"
+cyan = "#7dcfff"
+white = "#c0caf5"
+
+[colors.bright]
+black = "#414868"
+red = "#ff899d"
+green = "#b9f27c"
+yellow = "#f5c97a"
+blue = "#8db0ff"
+magenta = "#c7a9ff"
+cyan = "#a4daff"
+white = "#e5e9f0"
+
+[colors.dim]
+black = "#16161e"
+red = "#c65b72"
+green = "#7aa257"
+yellow = "#b88f55"
+blue = "#5d7ec7"
+magenta = "#9277cc"
+cyan = "#5fa9cc"
+white = "#99a3c7"
+
+[bell]
+animation = "EaseOutExpo"
+duration = 120
+color = "#e0af68"
+command = { program = "echo", args = ["bell"] }
+
+[selection]
+semantic_escape_chars = ",.;:()[]{}<>\t"
+save_to_clipboard = false
+
+[cursor]
+style = { shape = "Block", blinking = "Off" }
+vi_mode_style = { shape = "Block", blinking = "Never" }
+blink_interval = 750
+blink_timeout = 5
+unfocused_hollow = true
+thickness = 0.15
+
+[terminal]
+osc52 = "OnlyCopy"
+shell = { program = "/bin/zsh", args = ["-l"] }
+
+[mouse]
+hide_when_typing = true
+bindings = [
+  { mouse = "Right", mods = "Control", action = "Paste" },
+  { mouse = "Middle", chars = "mouse-middle\n" },
+  { mouse = "Forward", mode = "~Vi", command = { program = "echo", args = ["mouse-binding"] } },
+]
+
+[hints]
+alphabet = "jfkdls;ahgurieowpq"
+
+[[hints.enabled]]
+regex = "(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file:|git://|ssh:|ftp://)[^\\u0000-\\u001F\\u007F-\\u009F<>\"\\s{}|\\\\^⟨⟩`]+"
+hyperlinks = true
+post_processing = true
+persist = false
+command = { program = "xdg-open", args = [] }
+binding = { key = "O", mods = "Control|Shift", mode = "~Vi|~Search" }
+mouse = { enabled = true, mods = "Control" }
+
+[[hints.enabled]]
+regex = "\\b[0-9a-f]{7,40}\\b"
+hyperlinks = false
+post_processing = false
+persist = true
+action = "Copy"
+binding = { key = "Y", mods = "Control|Shift", mode = "~Search" }
+mouse = { enabled = false, mods = "None" }
+
+[keyboard]
+bindings = [
+  { key = "N", mods = "Control|Shift", action = "CreateNewWindow" },
+  { key = "L", mods = "Control|Shift", chars = "l" },
+  { key = "F12", mods = "None", mode = "~Vi|~Search", command = { program = "echo", args = ["keyboard-binding"] } },
+  { key = "NumpadAdd", mods = "Control", action = "IncreaseFontSize" },
+]
+
+[debug]
+render_timer = false
+persistent_logging = false
+log_level = "Warn"
+print_events = false
+highlight_damage = false

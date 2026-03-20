@@ -18,7 +18,12 @@ fi
 echo "Starting asset upload from $file_path to $repo."
 
 # Get the release for this tag.
-tag="$(git describe --tags --abbrev=0)"
+tag="${RELEASE_TAG:-}"
+if [ -n "$tag" ]; then
+    echo "Using workflow-provided release tag: $tag"
+else
+    tag="$(git describe --tags --abbrev=0)"
+fi
 
 # Make sure the git tag could be determined.
 if [ -z "$tag" ]; then
@@ -57,7 +62,7 @@ if [ -z "$upload_url" ]; then
             --http1.1 \
             -X POST \
             -H "Authorization: Bearer $bearer" \
-            -d "{\"tag_name\":\"$tag\",\"draft\":true}" \
+            -d "{\"tag_name\":\"$tag\",\"target_commitish\":\"${RELEASE_TARGET_COMMITISH:-}\",\"draft\":true}" \
             "https://api.github.com/repos/$repo/releases" \
             2> /dev/null\
     )

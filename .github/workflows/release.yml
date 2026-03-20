@@ -1,12 +1,23 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to use for asset names and the GitHub draft release (for example: v0.17.1)"
+        required: true
+        type: string
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: write
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  RELEASE_TARGET_COMMITISH: ${{ github.sha }}
 
 jobs:
   macos:
@@ -14,6 +25,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install dependencies
         run: brew install scdoc
       - name: Install ARM target
@@ -26,8 +39,8 @@ jobs:
         run: make dmg-universal
       - name: Upload Application
         run: |
-          mv ./target/release/osx/CuTTY.dmg ./CuTTY-${GITHUB_REF##*/}.dmg
-          ./.github/workflows/upload_asset.sh ./CuTTY-${GITHUB_REF##*/}.dmg $GITHUB_TOKEN
+          mv ./target/release/osx/CuTTY.dmg ./CuTTY-${RELEASE_TAG}.dmg
+          ./.github/workflows/upload_asset.sh ./CuTTY-${RELEASE_TAG}.dmg $GITHUB_TOKEN
 
   windows:
     runs-on: windows-latest
@@ -38,32 +51,36 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Test
         run: cargo test --release
       - name: Build
         run: cargo build --release
       - name: Upload portable executable
         run: |
-          cp ./target/release/cutty.exe ./CuTTY-${GITHUB_REF##*/}-portable.exe
+          cp ./target/release/cutty.exe ./CuTTY-${RELEASE_TAG}-portable.exe
           ./.github/workflows/upload_asset.sh \
-            ./CuTTY-${GITHUB_REF##*/}-portable.exe $GITHUB_TOKEN
+            ./CuTTY-${RELEASE_TAG}-portable.exe $GITHUB_TOKEN
       - name: Install WiX
         run: dotnet tool install --global wix --version 4.0.5
       - name: Create msi installer
         run: |
           wix extension add WixToolset.UI.wixext/4.0.5 WixToolset.Util.wixext/4.0.5
           wix build -arch "x64" -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext \
-          -out "./CuTTY-${GITHUB_REF##*/}-installer.msi" "cutty/windows/wix/cutty.wxs"
+          -out "./CuTTY-${RELEASE_TAG}-installer.msi" "cutty/windows/wix/cutty.wxs"
       - name: Upload msi installer
         run: |
           ./.github/workflows/upload_asset.sh \
-            ./CuTTY-${GITHUB_REF##*/}-installer.msi $GITHUB_TOKEN
+            ./CuTTY-${RELEASE_TAG}-installer.msi $GITHUB_TOKEN
 
   linux:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install dependencies
         run: |
           sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev \
@@ -93,12 +110,14 @@ jobs:
           ./.github/workflows/upload_asset.sh ./extra/cutty.info $GITHUB_TOKEN
 
   crates_io:
-    if: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+    if: ${{ github.event_name == 'push' && secrets.CARGO_REGISTRY_TOKEN != '' }}
     needs: [macos, windows, linux]
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install dependencies
         run: |
           sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev \

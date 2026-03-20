@@ -365,4 +365,14 @@ mod tests {
         assert_eq!(import_paths.len(), 1);
         assert_eq!(import_paths[0].as_ref().unwrap(), &PathBuf::from("/tmp/theme.toml"));
     }
+
+    #[test]
+    fn bundled_example_config_is_valid() {
+        toml::from_str::<UiConfig>(include_str!("../../../extra/cutty.example.toml")).unwrap();
+    }
+
+    #[test]
+    fn bundled_daily_config_is_valid() {
+        toml::from_str::<UiConfig>(include_str!("../../../extra/cutty.daily.toml")).unwrap();
+    }
 }

@@ -45,6 +45,10 @@ Build and installation instructions live in [INSTALL.md](./INSTALL.md).
 
 You can find the documentation for CuTTY's configuration in `man 5 cutty`, or
 in the source manpage at [extra/man/cutty.5.scd](./extra/man/cutty.5.scd).
+There is also a full example configuration at
+[extra/cutty.example.toml](./extra/cutty.example.toml), and a practical
+day-to-day starter config at
+[extra/cutty.daily.toml](./extra/cutty.daily.toml).
 
 CuTTY doesn't create the config file for you, but it looks for one in the
 following locations:
