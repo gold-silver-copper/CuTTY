@@ -48,9 +48,9 @@ mod window_context;
 
 #[cfg(unix)]
 use crate::cli::MessageOptions;
+use crate::cli::Options;
 #[cfg(not(any(target_os = "macos", windows)))]
 use crate::cli::SocketMessage;
-use crate::cli::Options;
 #[cfg(unix)]
 use crate::cli::Subcommands;
 use crate::config::UiConfig;

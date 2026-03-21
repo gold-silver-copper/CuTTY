@@ -723,26 +723,4 @@ mod tests {
         assert_eq!(pty.working_directory, Some(PathBuf::from("/tmp/cutty")));
         assert_eq!(pty.shell, Some(Shell::new(String::from("/bin/zsh"), vec![String::from("-l")])));
     }
-
-    #[test]
-    fn root_level_terminal_keys_are_ignored() {
-        let config: UiConfig = toml::from_str(
-            r#"
-            shell = "/bin/zsh"
-            working_directory = "/tmp/legacy"
-            live_config_reload = false
-
-            [general]
-            ipc_socket = false
-            "#,
-        )
-        .unwrap();
-
-        let pty = config.pty_config();
-        assert_eq!(pty.shell, None);
-        assert_eq!(pty.working_directory, None);
-        assert!(config.live_config_reload());
-        #[cfg(unix)]
-        assert!(!config.ipc_socket());
-    }
 }

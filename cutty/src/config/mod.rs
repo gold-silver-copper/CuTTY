@@ -188,10 +188,88 @@ pub fn deserialize_config(path: &Path) -> Result<Value> {
         contents = contents.split_off(3);
     }
 
-    // Load configuration file as Value.
-    let config: Value = toml::from_str(&contents)?;
+    deserialize_toml_config(&contents).map_err(Into::into)
+}
 
+fn deserialize_toml_config(contents: &str) -> std::result::Result<Value, TomlError> {
+    let mut config: Value = toml::from_str(contents)?;
+    normalize_legacy_toml(&mut config);
     Ok(config)
+}
+
+fn normalize_legacy_toml(config: &mut Value) {
+    let Some(table) = config.as_table_mut() else {
+        return;
+    };
+
+    move_legacy_value(table, "draw_bold_text_with_bright_colors", &[
+        "colors",
+        "draw_bold_text_with_bright_colors",
+    ]);
+    move_legacy_value(table, "key_bindings", &["keyboard", "bindings"]);
+    move_legacy_value(table, "mouse_bindings", &["mouse", "bindings"]);
+    move_legacy_value(table, "live_config_reload", &["general", "live_config_reload"]);
+    move_legacy_value(table, "working_directory", &["general", "working_directory"]);
+    move_legacy_value(table, "ipc_socket", &["general", "ipc_socket"]);
+    move_legacy_value(table, "import", &["general", "import"]);
+    move_legacy_value(table, "shell", &["terminal", "shell"]);
+
+    rename_nested_value(table, &["colors", "cursor"], "text", "foreground");
+    rename_nested_value(table, &["colors", "cursor"], "cursor", "background");
+    rename_nested_value(table, &["colors", "vi_mode_cursor"], "text", "foreground");
+    rename_nested_value(table, &["colors", "vi_mode_cursor"], "cursor", "background");
+    rename_nested_value(table, &["colors", "selection"], "text", "foreground");
+    rename_nested_value(table, &["colors", "selection"], "cursor", "background");
+}
+
+fn move_legacy_value(table: &mut Table, origin: &str, target: &[&str]) {
+    let Some(value) = table.remove(origin) else {
+        return;
+    };
+
+    insert_if_missing(table, target, value);
+}
+
+fn insert_if_missing(table: &mut Table, path: &[&str], value: Value) {
+    let Some((segment, rest)) = path.split_first() else {
+        return;
+    };
+
+    if rest.is_empty() {
+        table.entry((*segment).to_owned()).or_insert(value);
+        return;
+    }
+
+    let entry = table.entry((*segment).to_owned()).or_insert_with(|| Value::Table(Table::new()));
+    let Value::Table(next) = entry else {
+        return;
+    };
+
+    insert_if_missing(next, rest, value);
+}
+
+fn rename_nested_value(table: &mut Table, path: &[&str], origin: &str, target: &str) {
+    let Some(target_table) = table_at_mut(table, path) else {
+        return;
+    };
+
+    let Some(value) = target_table.remove(origin) else {
+        return;
+    };
+
+    target_table.entry(target.to_owned()).or_insert(value);
+}
+
+fn table_at_mut<'a>(table: &'a mut Table, path: &[&str]) -> Option<&'a mut Table> {
+    let Some((segment, rest)) = path.split_first() else {
+        return Some(table);
+    };
+
+    let Value::Table(next) = table.get_mut(*segment)? else {
+        return None;
+    };
+
+    table_at_mut(next, rest)
 }
 
 /// Load all referenced configuration files.
@@ -242,7 +320,8 @@ pub fn imports(
     base_path: &Path,
     recursion_limit: usize,
 ) -> StdResult<Vec<StdResult<PathBuf, String>>, String> {
-    let imports = config.get("general").and_then(|g| g.get("import"));
+    let imports =
+        config.get("general").and_then(|g| g.get("import")).or_else(|| config.get("import"));
     let imports = match imports {
         Some(Value::Array(imports)) => imports,
         Some(_) => return Err("Invalid import type: expected a sequence".into()),
@@ -337,17 +416,23 @@ pub fn installed_config(suffix: &str) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    use cutty_terminal::tty::Shell;
+
+    use crate::display::color::CellRgb;
+
     #[test]
     fn empty_config() {
         toml::from_str::<UiConfig>("").unwrap();
     }
 
     #[test]
-    fn root_level_imports_are_ignored() {
-        let config: Value = toml::from_str(r#"import = ["theme.toml"]"#).unwrap();
+    fn legacy_root_level_imports_are_loaded() {
+        let config = deserialize_toml_config(r#"import = ["theme.toml"]"#).unwrap();
         let base = Path::new("/tmp/cutty.toml");
 
-        assert!(imports(&config, base, IMPORT_RECURSION_LIMIT).unwrap().is_empty());
+        let import_paths = imports(&config, base, IMPORT_RECURSION_LIMIT).unwrap();
+        assert_eq!(import_paths.len(), 1);
+        assert_eq!(import_paths[0].as_ref().unwrap(), &PathBuf::from("/tmp/theme.toml"));
     }
 
     #[test]
@@ -374,5 +459,54 @@ mod tests {
     #[test]
     fn bundled_daily_config_is_valid() {
         toml::from_str::<UiConfig>(include_str!("../../../extra/cutty.daily.toml")).unwrap();
+    }
+
+    #[test]
+    fn legacy_alacritty_toml_is_supported() {
+        let config = deserialize_toml_config(
+            r#"
+            shell = "/bin/zsh"
+            working_directory = "/tmp/legacy"
+            live_config_reload = false
+            ipc_socket = false
+            draw_bold_text_with_bright_colors = true
+            import = ["theme.toml"]
+            key_bindings = [
+                { key = "Back", chars = "\u007f" },
+                { key = "Key0", mods = "Control", action = "ResetFontSize" },
+            ]
+
+            [colors.cursor]
+            text = "CellBackground"
+            cursor = "CellForeground"
+            "#,
+        )
+        .unwrap();
+        let config = UiConfig::deserialize(config).unwrap();
+
+        let pty = config.pty_config();
+        assert_eq!(pty.shell, Some(Shell::new(String::from("/bin/zsh"), Vec::new())));
+        assert_eq!(pty.working_directory, Some(PathBuf::from("/tmp/legacy")));
+        assert!(!config.live_config_reload());
+        #[cfg(unix)]
+        assert!(!config.ipc_socket());
+        assert!(config.colors.draw_bold_text_with_bright_colors);
+        assert_eq!(config.colors.cursor.foreground, CellRgb::CellBackground);
+        assert_eq!(config.colors.cursor.background, CellRgb::CellForeground);
+        assert!(config.key_bindings().iter().any(|binding| {
+            binding.trigger
+                == crate::config::bindings::BindingKey::Keycode {
+                    key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::Backspace),
+                    location: crate::config::bindings::KeyLocation::Any,
+                }
+        }));
+        assert!(config.key_bindings().iter().any(|binding| {
+            binding.action == Action::ResetFontSize
+                && binding.trigger
+                    == crate::config::bindings::BindingKey::Keycode {
+                        key: winit::keyboard::Key::Character("0".into()),
+                        location: crate::config::bindings::KeyLocation::Standard,
+                    }
+        }));
     }
 }
