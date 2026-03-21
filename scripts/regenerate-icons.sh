@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source_png="$repo_root/CuTTY2.png"
+source_png="$repo_root/CuTTY.png"
 canonical_png="$repo_root/extra/logo/cutty-term.png"
 compat_png="$repo_root/extra/logo/compat/cutty-term.png"
 promo_png="$repo_root/extra/promo/cutty-readme.png"
@@ -34,22 +34,17 @@ windows_ico = os.environ["WINDOWS_ICO"]
 macos_icns = os.environ["MACOS_ICNS"]
 
 source = Image.open(source_png).convert("RGBA")
+if source.width != source.height:
+    raise SystemExit(f"error: {source_png} must be square for borderless ICO/ICNS generation")
 
-master = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-fit = source.copy()
-fit.thumbnail((1024, 1024), Image.Resampling.NEAREST)
-x = (master.width - fit.width) // 2
-y = (master.height - fit.height) // 2
-master.alpha_composite(fit, (x, y))
-
-master.save(
+source.save(
     windows_ico,
     format="ICO",
     sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
 )
-master.save(
+source.save(
     macos_icns,
     format="ICNS",
-    sizes=[(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512), (1024, 1024)],
+    sizes=[(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512)],
 )
 PY
