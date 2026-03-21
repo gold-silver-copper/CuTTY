@@ -5,8 +5,6 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source_png="$repo_root/CuTTY.png"
 canonical_png="$repo_root/extra/logo/cutty-term.png"
-compat_png="$repo_root/extra/logo/compat/cutty-term.png"
-promo_png="$repo_root/extra/promo/cutty-readme.png"
 windows_ico="$repo_root/cutty/windows/cutty.ico"
 macos_icns="$repo_root/extra/osx/CuTTY.app/Contents/Resources/cutty.icns"
 
@@ -21,8 +19,6 @@ if ! python3 -c "import PIL" >/dev/null 2>&1; then
 fi
 
 cp "$source_png" "$canonical_png"
-cp "$source_png" "$compat_png"
-cp "$source_png" "$promo_png"
 
 SOURCE_PNG="$source_png" WINDOWS_ICO="$windows_ico" MACOS_ICNS="$macos_icns" python3 - <<'PY'
 import os

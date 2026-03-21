@@ -325,9 +325,8 @@ root. All derived icon assets can be regenerated from it with:
 ./scripts/regenerate-icons.sh
 ```
 
-This refreshes the packaged Linux PNG at `extra/logo/cutty-term.png`, the
-runtime/window PNG at `extra/logo/compat/cutty-term.png`, the Windows icon at
-`cutty/windows/cutty.ico`, and the macOS bundle icon at
+This refreshes the packaged Linux/runtime PNG at `extra/logo/cutty-term.png`,
+the Windows icon at `cutty/windows/cutty.ico`, and the macOS bundle icon at
 `extra/osx/CuTTY.app/Contents/Resources/cutty.icns`. The script requires
 `python3` with Pillow installed.
 
