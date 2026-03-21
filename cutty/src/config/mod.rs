@@ -464,7 +464,7 @@ mod tests {
     #[test]
     fn legacy_alacritty_toml_is_supported() {
         let config = deserialize_toml_config(
-            r#"
+            r##"
             shell = "/bin/zsh"
             working_directory = "/tmp/legacy"
             live_config_reload = false
@@ -479,7 +479,15 @@ mod tests {
             [colors.cursor]
             text = "CellBackground"
             cursor = "CellForeground"
-            "#,
+
+            [colors.vi_mode_cursor]
+            text = "#112233"
+            cursor = "#445566"
+
+            [colors.selection]
+            text = "#778899"
+            background = "#aabbcc"
+            "##,
         )
         .unwrap();
         let config = UiConfig::deserialize(config).unwrap();
@@ -493,6 +501,22 @@ mod tests {
         assert!(config.colors.draw_bold_text_with_bright_colors);
         assert_eq!(config.colors.cursor.foreground, CellRgb::CellBackground);
         assert_eq!(config.colors.cursor.background, CellRgb::CellForeground);
+        assert_eq!(
+            config.colors.vi_mode_cursor.foreground,
+            CellRgb::Rgb(crate::display::color::Rgb::new(0x11, 0x22, 0x33))
+        );
+        assert_eq!(
+            config.colors.vi_mode_cursor.background,
+            CellRgb::Rgb(crate::display::color::Rgb::new(0x44, 0x55, 0x66))
+        );
+        assert_eq!(
+            config.colors.selection.foreground,
+            CellRgb::Rgb(crate::display::color::Rgb::new(0x77, 0x88, 0x99))
+        );
+        assert_eq!(
+            config.colors.selection.background,
+            CellRgb::Rgb(crate::display::color::Rgb::new(0xaa, 0xbb, 0xcc))
+        );
         assert!(config.key_bindings().iter().any(|binding| {
             binding.trigger
                 == crate::config::bindings::BindingKey::Keycode {
@@ -507,6 +531,34 @@ mod tests {
                         key: winit::keyboard::Key::Character("0".into()),
                         location: crate::config::bindings::KeyLocation::Standard,
                     }
+        }));
+    }
+
+    #[test]
+    fn legacy_root_bindings_sections_are_supported() {
+        let config = deserialize_toml_config(
+            r#"
+            mouse_bindings = [
+                { mouse = "Right", action = "ExpandSelection" },
+            ]
+            key_bindings = [
+                { key = "Return", chars = "\r" },
+            ]
+            "#,
+        )
+        .unwrap();
+        let config = UiConfig::deserialize(config).unwrap();
+
+        assert!(config.mouse_bindings().iter().any(|binding| {
+            binding.trigger == MouseEvent::Button(winit::event::MouseButton::Right)
+                && binding.action == Action::Mouse(MouseAction::ExpandSelection)
+        }));
+        assert!(config.key_bindings().iter().any(|binding| {
+            binding.trigger
+                == crate::config::bindings::BindingKey::Keycode {
+                    key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::Enter),
+                    location: crate::config::bindings::KeyLocation::Standard,
+                }
         }));
     }
 }
