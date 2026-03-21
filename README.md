@@ -31,8 +31,16 @@ You can find an overview over the features available in CuTTY [here](./docs/feat
 
 ## Installation
 
-CuTTY can be installed by using various package managers on Linux, BSD,
-macOS and Windows.
+CuTTY can be installed directly in a few simple ways:
+
+- Windows: download a release binary from the GitHub Releases page.
+- macOS: either download a release binary from the GitHub Releases page, or install it the Unix way.
+
+- Linux/BSD/Unix: install with:
+
+  ```sh
+  cargo install cutty
+  ```
 
 Build and installation instructions live in [INSTALL.md](./INSTALL.md).
 
