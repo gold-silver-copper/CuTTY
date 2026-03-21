@@ -18,8 +18,7 @@ CuTTY is a fork of Alacritty that replaces the old OpenGL renderer with a
 to target modern graphics backends like Vulkan, Metal, and DirectX 12 instead
 of depending on an OpenGL rendering path. Replacing the hand-rolled OpenGL
 renderer with the Vello/Parley stack also cut roughly 4,000 lines of renderer
-and font-handling code. The terminal core and PTY behavior remain split into
-the `cutty_terminal` crate.
+and font-handling code. 
 
 The software is considered to be at a **beta** level of readiness; there are
 a few missing features and bugs to be fixed, but it is already used by many as
