@@ -318,9 +318,18 @@ sudo desktop-file-install extra/linux/CuTTY.desktop
 sudo update-desktop-database
 ```
 
-The packaged icon assets are derived from `CuTTY.png` in the repository root.
-The canonical PNG icon is available at `extra/logo/cutty-term.png`, and the
-runtime/window icon asset lives at `extra/logo/compat/cutty-term.png`.
+The source of truth for CuTTY's icon artwork is `CuTTY.png` in the repository
+root. All derived icon assets can be regenerated from it with:
+
+```sh
+./scripts/regenerate-icons.sh
+```
+
+This refreshes the packaged Linux PNG at `extra/logo/cutty-term.png`, the
+runtime/window PNG at `extra/logo/compat/cutty-term.png`, the Windows icon at
+`cutty/windows/cutty.ico`, and the macOS bundle icon at
+`extra/osx/CuTTY.app/Contents/Resources/cutty.icns`. The script requires
+`python3` with Pillow installed.
 
 ### Manual Page
 
