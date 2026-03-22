@@ -18,7 +18,8 @@ rust-version = "1.88.0"
 
 [profile.release]
 lto = "thin"
-debug = 1
+debug = 0
+strip = "debuginfo"
 incremental = false
 
 [profile.flamegraph]
