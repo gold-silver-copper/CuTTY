@@ -24,6 +24,11 @@ The software is considered to be at a **beta** level of readiness; there are
 a few missing features and bugs to be fixed, but it is already used by many as
 a daily driver.
 
+<p align="center">
+  <img alt="CuTTY demo"
+       src="./editorhyp-2026-03-22_01.45.59.lossless.webp">
+</p>
+
 ## Features
 
 You can find an overview over the features available in CuTTY [here](./docs/features.md).
