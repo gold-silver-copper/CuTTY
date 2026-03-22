@@ -1,6 +1,6 @@
 [package]
 name = "cutty_config"
-version = "0.3.2"
+version = "0.3.3"
 authors = ["Christian Duerr <contact@christianduerr.com>"]
 license = "MIT OR Apache-2.0"
 description = "CuTTY configuration abstractions"
