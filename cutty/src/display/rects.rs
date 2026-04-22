@@ -7,11 +7,11 @@ use vello::peniko::Fill;
 use cutty_terminal::grid::Dimensions;
 use cutty_terminal::index::{Column, Point};
 use cutty_terminal::term::cell::Flags;
+use parley_term::TextMetrics;
 
 use crate::display::SizeInfo;
 use crate::display::color::Rgb;
 use crate::display::content::RenderableCell;
-use crate::display::text::{TextMetrics, color_from_rgb};
 
 #[derive(Debug, Copy, Clone)]
 pub struct RenderRect {
@@ -226,7 +226,8 @@ fn line_flag_index(flag: Flags) -> usize {
 }
 
 pub fn paint_rect(scene: &mut Scene, rect: &RenderRect) {
-    let brush = color_from_rgb(rect.color).with_alpha(rect.alpha);
+    let brush =
+        vello::peniko::Color::from_rgb8(rect.color.r, rect.color.g, rect.color.b).with_alpha(rect.alpha);
     match rect.kind {
         RectKind::Undercurl => paint_undercurl(scene, rect, brush),
         _ => {

@@ -23,6 +23,10 @@ version = "0.3.4"
 path = "../cutty_config"
 version = "0.3.4"
 
+[dependencies.parley_term]
+path = "../parley_term"
+version = "0.1.0"
+
 [dependencies]
 ahash = { version = "0.8.6", features = ["no-rng"] }
 bitflags = "2.2.1"

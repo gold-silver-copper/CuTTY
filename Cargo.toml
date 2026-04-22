@@ -4,6 +4,7 @@ members = [
     "cutty_terminal",
     "cutty_config",
     "cutty_config_derive",
+    "parley_term",
 ]
 exclude = [
     "parley-main",

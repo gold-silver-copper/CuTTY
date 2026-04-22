@@ -553,6 +553,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "parley",
+ "parley_term",
  "png",
  "polling",
  "pollster",
@@ -1850,6 +1851,19 @@ dependencies = [
  "linebender_resource_handle",
  "skrifa 0.37.0",
  "swash",
+]
+
+[[package]]
+name = "parley_term"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "bitflags 2.9.4",
+ "parley",
+ "pollster",
+ "unicode-width",
+ "vello",
+ "winit",
 ]
 
 [[package]]

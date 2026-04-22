@@ -115,7 +115,7 @@ impl SceneRenderer {
             surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder =
             device_handle.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("cutty.vello.surface_blit"),
+                label: Some("parley_term.vello.surface_blit"),
             });
         self.surface.blitter.copy(
             &device_handle.device,

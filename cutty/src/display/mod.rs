@@ -9,7 +9,7 @@ use parking_lot::MutexGuard;
 use serde::{Deserialize, Serialize};
 use unicode_width::UnicodeWidthChar;
 use vello::kurbo::Affine;
-use vello::peniko::{Color, Fill};
+use vello::peniko::{Brush, Color, Fill};
 use vello::{Glyph, Scene};
 use winit::dpi::PhysicalSize;
 use winit::keyboard::ModifiersState;
@@ -24,6 +24,13 @@ use cutty_terminal::term::{
     self, LineDamageBounds, MIN_COLUMNS, MIN_SCREEN_LINES, Term, TermDamage, TermMode,
 };
 use cutty_terminal::vte::ansi::{CursorShape, NamedColor};
+use parley_term::{
+    CellFlags as SceneCellFlags, CursorShape as SceneCursorShape, Font as SceneFont,
+    FontDescription as SceneFontDescription, FontOffset as SceneFontOffset,
+    FontSize as SceneFontSize, RenderRect as SceneRenderRect, RendererError, SceneBuilder,
+    SceneCursor, SceneFrame, SceneRenderer, SizeInfo as SceneSizeInfo, TerminalCell, TerminalGrid,
+    TextMetrics,
+};
 
 use crate::config::UiConfig;
 use crate::config::font::{Font, FontSize};
@@ -38,8 +45,6 @@ use crate::display::damage::{DamageTracker, damage_y_to_viewport_y};
 use crate::display::hint::{HintMatch, HintState};
 use crate::display::meter::Meter;
 use crate::display::rects::{RenderLine, RenderLines, RenderRect, paint_rect, paint_rects};
-use crate::display::renderer::SceneRenderer;
-use crate::display::text::{TextMetrics, TextSystem, color_from_rgb};
 use crate::display::window::Window;
 use crate::event::{Event, EventType, Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
@@ -56,8 +61,6 @@ mod bell;
 mod damage;
 mod meter;
 mod rects;
-mod renderer;
-mod text;
 
 /// Label for the forward terminal search bar.
 const FORWARD_SEARCH_LABEL: &str = "Search: ";
@@ -74,7 +77,7 @@ const DAMAGE_RECT_COLOR: Rgb = Rgb::new(255, 0, 255);
 #[derive(Debug)]
 pub enum Error {
     Window(window::Error),
-    Render(renderer::Error),
+    Render(RendererError),
 }
 
 impl std::error::Error for Error {
@@ -101,8 +104,8 @@ impl From<window::Error> for Error {
     }
 }
 
-impl From<renderer::Error> for Error {
-    fn from(val: renderer::Error) -> Self {
+impl From<RendererError> for Error {
+    fn from(val: RendererError) -> Self {
         Error::Render(val)
     }
 }
@@ -299,7 +302,7 @@ pub struct Display {
 
     hint_mouse_point: Option<Point>,
     scene_renderer: SceneRenderer,
-    text_system: TextSystem,
+    scene_builder: SceneBuilder,
     meter: Meter,
 }
 
@@ -308,8 +311,8 @@ impl Display {
         let scale_factor = window.scale_factor as f32;
         let font_size = config.font.size().scale(scale_factor);
         let font = config.font.clone().with_size(font_size);
-        let text_system = TextSystem::new(font);
-        let metrics = text_system.metrics();
+        let scene_builder = SceneBuilder::new(parley_term_text_system(&font));
+        let metrics = scene_builder.text_system().metrics();
 
         let mut viewport_size = window.inner_size();
         if let Some(dimensions) = config.window.dimensions() {
@@ -387,7 +390,7 @@ impl Display {
             font_size,
             hint_mouse_point: Default::default(),
             scene_renderer,
-            text_system,
+            scene_builder,
             meter: Default::default(),
         })
     }
@@ -403,11 +406,13 @@ impl Display {
         T: EventListener,
     {
         let pending_update = std::mem::take(&mut self.pending_update);
-        let mut metrics = self.text_system.metrics();
+        let mut metrics = self.scene_builder.text_system().metrics();
 
         if let Some(font) = pending_update.font().cloned() {
-            self.text_system.update_font(font);
-            metrics = self.text_system.metrics();
+            self.scene_builder
+                .text_system_mut()
+                .update_font(parley_term_font(&font));
+            metrics = self.scene_builder.text_system().metrics();
             self.damage_tracker.frame().mark_fully_damaged();
         }
 
@@ -496,7 +501,7 @@ impl Display {
         let cursor_point = terminal.grid().cursor.point;
         let total_lines = terminal.grid().total_lines();
         let size_info = self.size_info;
-        let metrics = self.text_system.metrics();
+        let metrics = self.scene_builder.text_system().metrics();
 
         let vi_mode = terminal.mode().contains(TermMode::VI);
         let vi_cursor_point = if vi_mode { Some(terminal.vi_mode_cursor.point) } else { None };
@@ -552,16 +557,19 @@ impl Display {
             prepared_cells.push(cell);
         }
 
-        let mut scene = Scene::new();
-
         let render_start = Instant::now();
-        {
-            let text_system = &mut self.text_system;
+        let scene = {
+            let mut terminal_grid = TerminalGrid::new(size_info.columns(), size_info.screen_lines());
+            terminal_grid.cells = prepared_cells.iter().map(terminal_cell_from_renderable).collect();
+            terminal_grid.cursor = scene_cursor_from_renderable(cursor);
 
-            for cell in &prepared_cells {
-                Self::paint_cell_background(&mut scene, cell, size_info);
-                Self::paint_cell_text(&mut scene, text_system, size_info, cell);
-            }
+            let scene_frame = SceneFrame {
+                size: scene_size_info(size_info),
+                background: scene_rgb(background_color),
+                grid: terminal_grid,
+                overlays: Vec::<SceneRenderRect>::new(),
+            };
+            let mut scene = self.scene_builder.build_scene(&scene_frame);
 
             let mut rects = lines.rects(&metrics, &size_info);
 
@@ -574,8 +582,6 @@ impl Display {
             } else if search_state.regex().is_some() {
                 self.draw_line_indicator(&mut scene, config, total_lines, None, display_offset);
             }
-
-            rects.extend(cursor.rects(&size_info, config.cursor.thickness()));
 
             let visual_bell_intensity = self.visual_bell.intensity();
             if visual_bell_intensity != 0. {
@@ -681,7 +687,8 @@ impl Display {
                     paint_rect(&mut scene, &rect);
                 }
             }
-        }
+            scene
+        };
         self.meter.record(render_start.elapsed());
 
         self.window.pre_present_notify();
@@ -767,47 +774,6 @@ impl Display {
         dirty
     }
 
-    fn paint_cell_background(
-        scene: &mut Scene,
-        cell: &crate::display::content::RenderableCell,
-        size: SizeInfo,
-    ) {
-        if cell.bg_alpha <= 0.0 {
-            return;
-        }
-
-        let width_cells = if cell.flags.contains(Flags::WIDE_CHAR) { 2.0 } else { 1.0 };
-        let rect = RenderRect::new(
-            size.padding_x() + cell.point.column.0 as f32 * size.cell_width(),
-            size.padding_y() + cell.point.line as f32 * size.cell_height(),
-            size.cell_width() * width_cells,
-            size.cell_height(),
-            cell.bg,
-            cell.bg_alpha,
-        );
-        paint_rect(scene, &rect);
-    }
-
-    fn paint_cell_text(
-        scene: &mut Scene,
-        text_system: &mut TextSystem,
-        size: SizeInfo,
-        cell: &crate::display::content::RenderableCell,
-    ) {
-        let Some(layout) = text_system.shape_cell(cell) else {
-            return;
-        };
-        Self::paint_layout(
-            scene,
-            &layout,
-            text_system.metrics(),
-            size,
-            cell.point.line,
-            cell.point.column.0,
-            cell.fg,
-        );
-    }
-
     fn paint_layout(
         scene: &mut Scene,
         layout: &parley::Layout<()>,
@@ -821,7 +787,7 @@ impl Display {
             (size.padding_x() + column as f32 * size.cell_width() + metrics.glyph_offset_x) as f64,
             (size.padding_y() + line as f32 * size.cell_height() + metrics.glyph_offset_y) as f64,
         ));
-        let brush = vello::peniko::Brush::Solid(color_from_rgb(fg));
+        let brush = Brush::Solid(Color::from_rgb8(fg.r, fg.g, fg.b));
 
         for line in layout.lines() {
             for item in line.items() {
@@ -864,7 +830,7 @@ impl Display {
         }
 
         let size_info = self.size_info;
-        let metrics = self.text_system.metrics();
+        let metrics = self.scene_builder.text_system().metrics();
         let mut column = point.column.0;
         let rect = RenderRect::new(
             size_info.padding_x() + column as f32 * size_info.cell_width(),
@@ -879,7 +845,10 @@ impl Display {
         for character in text.chars() {
             let width = char_cell_width(character);
             if !character.is_whitespace() {
-                let layout = self.text_system.shape_character(character, false, false);
+                let layout = self
+                    .scene_builder
+                    .text_system_mut()
+                    .shape_character(character, false, false);
                 Self::paint_layout(scene, &layout, metrics, size_info, point.line, column, fg);
             }
 
@@ -935,7 +904,7 @@ impl Display {
 
         let underline = RenderLine { start, end, color: fg };
         rects.extend(underline.rects(
-            &self.text_system.metrics(),
+            &self.scene_builder.text_system().metrics(),
             &self.size_info,
             Flags::UNDERLINE,
         ));
@@ -1171,6 +1140,114 @@ fn scene_glyph_from_layout(
     let positioned = Glyph { id: glyph.id, x: *cursor_x + glyph.x, y: baseline - glyph.y };
     *cursor_x += glyph.advance;
     positioned
+}
+
+fn parley_term_text_system(font: &Font) -> parley_term::TextSystem {
+    parley_term::TextSystem::new(parley_term_font(font))
+}
+
+fn parley_term_font(font: &Font) -> SceneFont {
+    SceneFont {
+        offset: SceneFontOffset { x: font.offset.x, y: font.offset.y },
+        glyph_offset: SceneFontOffset {
+            x: font.glyph_offset.x,
+            y: font.glyph_offset.y,
+        },
+        normal: parley_term_font_description(font.normal()),
+        bold: Some(parley_term_font_description(&font.bold())),
+        italic: Some(parley_term_font_description(&font.italic())),
+        bold_italic: Some(parley_term_font_description(&font.bold_italic())),
+        size: SceneFontSize::from_px(font.size().as_px()),
+    }
+}
+
+fn parley_term_font_description(font: &crate::config::font::FontDescription) -> SceneFontDescription {
+    SceneFontDescription { family: font.family.clone(), style: font.style.clone() }
+}
+
+fn scene_size_info(size_info: SizeInfo) -> SceneSizeInfo {
+    SceneSizeInfo::new(
+        size_info.width(),
+        size_info.height(),
+        size_info.cell_width(),
+        size_info.cell_height(),
+        size_info.padding_x(),
+        size_info.padding_y(),
+        false,
+    )
+}
+
+fn scene_rgb(rgb: Rgb) -> parley_term::Rgb {
+    parley_term::Rgb::new(rgb.r, rgb.g, rgb.b)
+}
+
+fn terminal_cell_from_renderable(cell: &crate::display::content::RenderableCell) -> TerminalCell {
+    let mut text = String::with_capacity(
+        1 + cell.extra.as_ref().and_then(|extra| extra.zerowidth.as_ref()).map_or(0, Vec::len),
+    );
+    text.push(cell.character);
+    if let Some(extra) = cell.extra.as_ref().and_then(|extra| extra.zerowidth.as_ref()) {
+        text.extend(extra.iter().copied());
+    }
+
+    let width = if cell.flags.contains(Flags::WIDE_CHAR) {
+        std::num::NonZeroU32::new(2).unwrap()
+    } else {
+        std::num::NonZeroU32::new(1).unwrap()
+    };
+
+    TerminalCell {
+        row: cell.point.line,
+        column: cell.point.column.0,
+        text: text.into_boxed_str(),
+        width,
+        fg: scene_rgb(cell.fg),
+        bg: scene_rgb(cell.bg),
+        bg_alpha: cell.bg_alpha,
+        underline: scene_rgb(cell.underline),
+        flags: scene_cell_flags(cell.flags),
+    }
+}
+
+fn scene_cell_flags(flags: Flags) -> SceneCellFlags {
+    let mut scene_flags = SceneCellFlags::empty();
+    scene_flags.set(SceneCellFlags::BOLD, flags.intersects(Flags::BOLD | Flags::DIM_BOLD));
+    scene_flags.set(SceneCellFlags::ITALIC, flags.contains(Flags::ITALIC));
+    scene_flags.set(SceneCellFlags::HIDDEN, flags.contains(Flags::HIDDEN));
+    scene_flags.set(SceneCellFlags::UNDERLINE, flags.contains(Flags::UNDERLINE));
+    scene_flags.set(
+        SceneCellFlags::DOUBLE_UNDERLINE,
+        flags.contains(Flags::DOUBLE_UNDERLINE),
+    );
+    scene_flags.set(SceneCellFlags::STRIKEOUT, flags.contains(Flags::STRIKEOUT));
+    scene_flags.set(SceneCellFlags::UNDERCURL, flags.contains(Flags::UNDERCURL));
+    scene_flags.set(
+        SceneCellFlags::DOTTED_UNDERLINE,
+        flags.contains(Flags::DOTTED_UNDERLINE),
+    );
+    scene_flags.set(
+        SceneCellFlags::DASHED_UNDERLINE,
+        flags.contains(Flags::DASHED_UNDERLINE),
+    );
+    scene_flags
+}
+
+fn scene_cursor_from_renderable(cursor: RenderableCursor) -> Option<SceneCursor> {
+    let shape = match cursor.shape() {
+        CursorShape::Hidden | CursorShape::Block => return None,
+        CursorShape::Beam => SceneCursorShape::Beam,
+        CursorShape::Underline => SceneCursorShape::Underline,
+        CursorShape::HollowBlock => SceneCursorShape::HollowBlock,
+    };
+
+    Some(SceneCursor {
+        row: cursor.point().line,
+        column: cursor.point().column.0,
+        width: cursor.width(),
+        shape,
+        color: scene_rgb(cursor.color()),
+        text_color: scene_rgb(cursor.color()),
+    })
 }
 
 fn char_cell_width(character: char) -> usize {

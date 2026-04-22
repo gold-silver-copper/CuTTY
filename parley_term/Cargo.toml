@@ -1,0 +1,18 @@
+[package]
+name = "parley_term"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Reusable Parley/Vello terminal scene builder extracted from CuTTY"
+homepage = "https://github.com/gold-silver-copper/CuTTY"
+repository = "https://github.com/gold-silver-copper/CuTTY"
+
+[dependencies]
+ahash = "0.8.6"
+bitflags = "2.6.0"
+parley = "0.7.0"
+pollster = "0.4"
+unicode-width = "0.2.0"
+vello = "0.7.0"
+winit = { version = "0.30.9", default-features = false, features = ["rwh_06"] }
