@@ -101,6 +101,12 @@ impl TextSystem {
             return None;
         }
 
+        // Tabs are stored in the grid so selection/copy can reconstruct them, but they should
+        // never be shaped as visible glyphs.
+        if cell.character == '\t' {
+            return None;
+        }
+
         let variant = font_variant(cell.flags);
         if let Some(extra) = cell.extra.as_ref().and_then(|extra| extra.zerowidth.as_ref()) {
             let mut text = String::with_capacity(1 + extra.len());
@@ -613,6 +619,24 @@ mod tests {
 
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(text.cache_len(), 1);
+    }
+
+    #[test]
+    fn tabs_are_not_shaped_as_visible_glyphs() {
+        let mut text = TextSystem::new(Font::default());
+        let tab_cell = RenderableCell {
+            character: '\t',
+            point: Point::default(),
+            fg: Rgb::new(255, 255, 255),
+            bg: Rgb::default(),
+            bg_alpha: 0.0,
+            underline: Rgb::default(),
+            flags: Flags::empty(),
+            extra: None,
+        };
+
+        assert!(text.shape_cell(&tab_cell).is_none());
+        assert_eq!(text.cache_len(), 0);
     }
 
     #[test]
