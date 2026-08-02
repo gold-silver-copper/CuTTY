@@ -5,7 +5,7 @@ use cutty_terminal::vte::ansi::CursorShape;
 use crate::display::SizeInfo;
 use crate::display::color::Rgb;
 use crate::display::content::RenderableCursor;
-use crate::display::rects::RenderRect;
+use crate::display::rects::{RenderRect, snap_cell_edge};
 
 /// Trait for conversion into the iterator.
 pub trait IntoRects {
@@ -16,15 +16,19 @@ pub trait IntoRects {
 impl IntoRects for RenderableCursor {
     fn rects(self, size_info: &SizeInfo, thickness: f32) -> CursorRects {
         let point = self.point();
-        let x = point.column.0 as f32 * size_info.cell_width() + size_info.padding_x();
-        let y = point.line as f32 * size_info.cell_height() + size_info.padding_y();
-
-        let mut width = size_info.cell_width();
-        let height = size_info.cell_height();
-
-        let thickness = (thickness * width).round().max(1.);
-
-        width *= self.width().get() as f32;
+        let column = point.column.0 as f32;
+        let line = point.line as f32;
+        let cursor_width = self.width().get() as f32;
+        let cell_width = size_info.cell_width();
+        let cell_height = size_info.cell_height();
+        let x = size_info.padding_x() + snap_cell_edge(column, cell_width);
+        let y = size_info.padding_y() + snap_cell_edge(line, cell_height);
+        let width =
+            snap_cell_edge(column + cursor_width, cell_width) - snap_cell_edge(column, cell_width);
+        let height = snap_cell_edge(line + 1.0, cell_height) - snap_cell_edge(line, cell_height);
+        let one_cell_width =
+            snap_cell_edge(column + 1.0, cell_width) - snap_cell_edge(column, cell_width);
+        let thickness = (thickness * one_cell_width).round().max(1.);
 
         match self.shape() {
             CursorShape::Beam => beam(x, y, height, thickness, self.color()),

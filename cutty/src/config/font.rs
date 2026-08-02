@@ -107,16 +107,18 @@ pub struct FontSize(f32);
 impl Eq for FontSize {}
 
 impl FontSize {
+    const PT_TO_PX: f32 = 96. / 72.;
+
     pub const fn new(size: f32) -> Self {
         Self(size)
     }
 
     pub const fn from_px(size: f32) -> Self {
-        Self(size)
+        Self(size / Self::PT_TO_PX)
     }
 
     pub const fn as_px(self) -> f32 {
-        self.0
+        self.0 * Self::PT_TO_PX
     }
 
     pub const fn as_pt(self) -> f32 {
@@ -166,5 +168,22 @@ impl Serialize for Size {
         S: Serializer,
     {
         serializer.serialize_f32(self.0.as_pt())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FontSize;
+
+    #[test]
+    fn font_size_converts_between_points_and_pixels() {
+        assert_eq!(FontSize::new(11.25).as_px(), 15.0);
+        assert_eq!(FontSize::from_px(15.0).as_pt(), 11.25);
+    }
+
+    #[test]
+    fn font_size_scaling_preserves_point_units() {
+        assert_eq!(FontSize::new(11.25).scale(2.0).as_pt(), 22.5);
+        assert_eq!(FontSize::new(11.25).scale(2.0).as_px(), 30.0);
     }
 }

@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Notable changes to the `cutty_terminal` crate are documented in its
 [CHANGELOG](./cutty_terminal/CHANGELOG.md).
 
+## Unreleased
+
+### Fixed
+
+- Font sizes rendering too small and zoom steps stretching cells vertically
+
 ## 0.18.5
 
 ### Fixed

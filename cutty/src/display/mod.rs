@@ -37,7 +37,9 @@ use crate::display::cursor::IntoRects;
 use crate::display::damage::{DamageTracker, damage_y_to_viewport_y};
 use crate::display::hint::{HintMatch, HintState};
 use crate::display::meter::Meter;
-use crate::display::rects::{RenderLine, RenderLines, RenderRect, paint_rect, paint_rects};
+use crate::display::rects::{
+    RenderLine, RenderLines, RenderRect, paint_rect, paint_rects, snap_cell_edge,
+};
 use crate::display::renderer::SceneRenderer;
 use crate::display::text::{TextMetrics, TextSystem, color_from_rgb};
 use crate::display::window::Window;
@@ -776,12 +778,18 @@ impl Display {
             return;
         }
 
+        let column = cell.point.column.0 as f32;
+        let line = cell.point.line as f32;
         let width_cells = if cell.flags.contains(Flags::WIDE_CHAR) { 2.0 } else { 1.0 };
+        let x0 = snap_cell_edge(column, size.cell_width());
+        let x1 = snap_cell_edge(column + width_cells, size.cell_width());
+        let y0 = snap_cell_edge(line, size.cell_height());
+        let y1 = snap_cell_edge(line + 1.0, size.cell_height());
         let rect = RenderRect::new(
-            size.padding_x() + cell.point.column.0 as f32 * size.cell_width(),
-            size.padding_y() + cell.point.line as f32 * size.cell_height(),
-            size.cell_width() * width_cells,
-            size.cell_height(),
+            size.padding_x() + x0,
+            size.padding_y() + y0,
+            x1 - x0,
+            y1 - y0,
             cell.bg,
             cell.bg_alpha,
         );
@@ -866,11 +874,15 @@ impl Display {
         let size_info = self.size_info;
         let metrics = self.text_system.metrics();
         let mut column = point.column.0;
+        let x0 = snap_cell_edge(column as f32, size_info.cell_width());
+        let x1 = snap_cell_edge((column + text_width) as f32, size_info.cell_width());
+        let y0 = snap_cell_edge(point.line as f32, size_info.cell_height());
+        let y1 = snap_cell_edge(point.line as f32 + 1.0, size_info.cell_height());
         let rect = RenderRect::new(
-            size_info.padding_x() + column as f32 * size_info.cell_width(),
-            size_info.padding_y() + point.line as f32 * size_info.cell_height(),
-            size_info.cell_width() * text_width as f32,
-            size_info.cell_height(),
+            size_info.padding_x() + x0,
+            size_info.padding_y() + y0,
+            x1 - x0,
+            y1 - y0,
             bg,
             1.0,
         );

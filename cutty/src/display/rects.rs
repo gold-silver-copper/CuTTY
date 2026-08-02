@@ -252,6 +252,15 @@ pub fn paint_rects(scene: &mut Scene, rects: impl IntoIterator<Item = RenderRect
     }
 }
 
+/// Snap a terminal cell-grid edge to the physical pixel grid.
+///
+/// Fractional cell metrics keep zoom proportional, but independently antialiased
+/// rectangles sharing a subpixel boundary can expose the base color between them.
+/// Rounding the shared edge makes adjacent fills tile exactly.
+pub fn snap_cell_edge(index: f32, cell_size: f32) -> f32 {
+    (index * cell_size).round()
+}
+
 fn paint_undercurl(scene: &mut Scene, rect: &RenderRect, brush: vello::peniko::Color) {
     let mut path = BezPath::new();
     let start_x = rect.x as f64;
@@ -273,4 +282,27 @@ fn paint_undercurl(scene: &mut Scene, rect: &RenderRect, brush: vello::peniko::C
     }
 
     scene.stroke(&Stroke::new(rect.height.max(1.0) as f64), Affine::IDENTITY, brush, None, &path);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::snap_cell_edge;
+
+    #[test]
+    fn snapped_fractional_cells_tile_without_gaps_or_overlap() {
+        for &cell_size in &[6.6_f32, 9.25, 17.3333, 28.898] {
+            let mut previous = snap_cell_edge(0.0, cell_size);
+            assert_eq!(previous, 0.0);
+
+            for index in 1..512 {
+                let edge = snap_cell_edge(index as f32, cell_size);
+                assert_eq!(edge, edge.round());
+
+                let span = edge - previous;
+                assert!(span >= cell_size.floor());
+                assert!(span <= cell_size.ceil());
+                previous = edge;
+            }
+        }
+    }
 }

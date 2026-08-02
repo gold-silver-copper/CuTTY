@@ -228,10 +228,8 @@ impl TextSystem {
             .unwrap_or_default();
 
         TextMetrics {
-            cell_width: (layout.full_width() + f32::from(self.font.offset.x)).floor().max(1.0),
-            cell_height: (line.metrics().line_height + f32::from(self.font.offset.y))
-                .floor()
-                .max(1.0),
+            cell_width: (layout.full_width() + f32::from(self.font.offset.x)).max(1.0),
+            cell_height: (line.metrics().line_height + f32::from(self.font.offset.y)).max(1.0),
             baseline: line.metrics().baseline,
             descent: line.metrics().descent,
             underline_position: run_metrics.underline_offset,
@@ -552,16 +550,31 @@ mod tests {
     use crate::display::content::RenderableCell;
 
     #[test]
-    fn font_update_recomputes_metrics() {
-        let mut text = TextSystem::new(Font::default());
-        let original = text.metrics();
-        let updated_font = Font::default().with_size(crate::config::font::FontSize::from_px(22.0));
+    fn font_size_steps_scale_cells_on_both_axes() {
+        let mut text =
+            TextSystem::new(Font::default().with_size(crate::config::font::FontSize::from_px(8.0)));
+        let mut previous = text.metrics();
 
-        text.update_font(updated_font);
+        for size in 9..=24 {
+            text.update_font(
+                Font::default().with_size(crate::config::font::FontSize::from_px(size as f32)),
+            );
 
-        let updated = text.metrics();
-        assert!(updated.cell_width >= original.cell_width);
-        assert!(updated.cell_height >= original.cell_height);
+            let metrics = text.metrics();
+            assert!(
+                metrics.cell_width > previous.cell_width,
+                "cell width must grow at size {size}: {} -> {}",
+                previous.cell_width,
+                metrics.cell_width,
+            );
+            assert!(
+                metrics.cell_height > previous.cell_height,
+                "cell height must grow at size {size}: {} -> {}",
+                previous.cell_height,
+                metrics.cell_height,
+            );
+            previous = metrics;
+        }
     }
 
     #[test]
