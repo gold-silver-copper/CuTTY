@@ -936,11 +936,9 @@ impl Display {
             });
             if extends_pending {
                 pending.as_mut().unwrap().width += rect.width;
-            } else {
-                if let Some(pending) = pending.replace(rect) {
-                    paint_rect(scene, &pending);
-                    fills += 1;
-                }
+            } else if let Some(pending) = pending.replace(rect) {
+                paint_rect(scene, &pending);
+                fills += 1;
             }
         }
 
