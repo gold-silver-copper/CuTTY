@@ -96,7 +96,18 @@ impl TextSystem {
         self.cache.clear();
     }
 
+    #[inline]
     pub fn shape_cell(&mut self, cell: &RenderableCell) -> Option<Arc<Layout<()>>> {
+        self.shape_cell_with_options(cell, true, true)
+    }
+
+    #[inline]
+    fn shape_cell_with_options(
+        &mut self,
+        cell: &RenderableCell,
+        skip_whitespace: bool,
+        cache_first: bool,
+    ) -> Option<Arc<Layout<()>>> {
         if cell.flags.contains(Flags::HIDDEN) {
             return None;
         }
@@ -112,10 +123,44 @@ impl TextSystem {
             let mut text = String::with_capacity(1 + extra.len());
             text.push(cell.character);
             text.extend(extra.iter().copied());
-            Some(self.shape_text(text, variant))
+            Some(self.shape_text_with_order(text, variant, cache_first))
+        // The terminal's empty cell is an ordinary space. Keeping this fast path specific avoids
+        // a Unicode whitespace table lookup for every visible character in a dense grid.
+        } else if skip_whitespace && cell.character == ' ' {
+            None
         } else {
-            Some(self.shape_char(cell.character, variant))
+            Some(self.shape_char_with_order(cell.character, variant, cache_first))
         }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn shape_cell_legacy(&mut self, cell: &RenderableCell) -> Option<Arc<Layout<()>>> {
+        self.shape_cell_with_options(cell, false, false)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn shape_cell_without_whitespace_skip(
+        &mut self,
+        cell: &RenderableCell,
+    ) -> Option<Arc<Layout<()>>> {
+        self.shape_cell_with_options(cell, false, true)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn shape_cell_without_cache_first(
+        &mut self,
+        cell: &RenderableCell,
+    ) -> Option<Arc<Layout<()>>> {
+        self.shape_cell_with_options(cell, true, false)
+    }
+
+    #[cfg(test)]
+    pub(super) fn reset_caches_for_benchmark(&mut self) {
+        self.checked_fallbacks.clear();
+        self.cache.clear();
     }
 
     #[cfg(test)]
@@ -148,31 +193,58 @@ impl TextSystem {
     }
 
     fn shape_char(&mut self, character: char, variant: FontVariant) -> Arc<Layout<()>> {
-        let mut buffer = [0; 4];
-        let text = character.encode_utf8(&mut buffer);
-        self.ensure_fontique_fallbacks(text);
+        self.shape_char_with_order(character, variant, true)
+    }
 
+    fn shape_char_with_order(
+        &mut self,
+        character: char,
+        variant: FontVariant,
+        cache_first: bool,
+    ) -> Arc<Layout<()>> {
         let key = LayoutKey {
             text: LayoutTextKey::Char(character),
             variant,
             font_size_bits: self.font.size().as_px().to_bits(),
         };
-        if let Some(layout) = self.cache.get(&key) {
+        if cache_first && let Some(layout) = self.cache.get(&key) {
+            return Arc::clone(layout);
+        }
+
+        let mut buffer = [0; 4];
+        let text = character.encode_utf8(&mut buffer);
+        self.ensure_fontique_fallbacks(text);
+
+        if !cache_first && let Some(layout) = self.cache.get(&key) {
             return Arc::clone(layout);
         }
 
         self.build_and_cache_layout(key, text, variant)
     }
 
+    #[cfg(test)]
     fn shape_text(&mut self, text: String, variant: FontVariant) -> Arc<Layout<()>> {
-        self.ensure_fontique_fallbacks(&text);
+        self.shape_text_with_order(text, variant, true)
+    }
 
+    fn shape_text_with_order(
+        &mut self,
+        text: String,
+        variant: FontVariant,
+        cache_first: bool,
+    ) -> Arc<Layout<()>> {
         let key = LayoutKey {
             text: LayoutTextKey::String(text.clone().into_boxed_str()),
             variant,
             font_size_bits: self.font.size().as_px().to_bits(),
         };
-        if let Some(layout) = self.cache.get(&key) {
+        if cache_first && let Some(layout) = self.cache.get(&key) {
+            return Arc::clone(layout);
+        }
+
+        self.ensure_fontique_fallbacks(&text);
+
+        if !cache_first && let Some(layout) = self.cache.get(&key) {
             return Arc::clone(layout);
         }
 
@@ -547,7 +619,7 @@ mod tests {
     };
     use crate::config::font::Font;
     use crate::display::color::Rgb;
-    use crate::display::content::RenderableCell;
+    use crate::display::content::{RenderableCell, RenderableCellExtra};
 
     #[test]
     fn font_size_steps_scale_cells_on_both_axes() {
@@ -650,6 +722,45 @@ mod tests {
 
         assert!(text.shape_cell(&tab_cell).is_none());
         assert_eq!(text.cache_len(), 0);
+    }
+
+    #[test]
+    fn whitespace_cells_are_not_shaped_as_visible_glyphs() {
+        let mut text = TextSystem::new(Font::default());
+        let space_cell = RenderableCell {
+            character: ' ',
+            point: Point::default(),
+            fg: Rgb::new(255, 255, 255),
+            bg: Rgb::new(30, 30, 30),
+            bg_alpha: 1.0,
+            underline: Rgb::default(),
+            flags: Flags::UNDERLINE,
+            extra: None,
+        };
+
+        assert!(text.shape_cell(&space_cell).is_none());
+        assert_eq!(text.cache_len(), 0);
+    }
+
+    #[test]
+    fn whitespace_with_combining_content_is_still_shaped() {
+        let mut text = TextSystem::new(Font::default());
+        let space_cell = RenderableCell {
+            character: ' ',
+            point: Point::default(),
+            fg: Rgb::new(255, 255, 255),
+            bg: Rgb::default(),
+            bg_alpha: 0.0,
+            underline: Rgb::default(),
+            flags: Flags::empty(),
+            extra: Some(Box::new(RenderableCellExtra {
+                zerowidth: Some(vec!['\u{301}']),
+                hyperlink: None,
+            })),
+        };
+
+        assert!(text.shape_cell(&space_cell).is_some());
+        assert_eq!(text.cache_len(), 1);
     }
 
     #[test]

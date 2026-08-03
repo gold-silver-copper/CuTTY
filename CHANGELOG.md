@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Notable changes to the `cutty_terminal` crate are documented in its
 [CHANGELOG](./cutty_terminal/CHANGELOG.md).
 
+## 0.18.7
+
+### Added
+
+- Headless renderer and parser benchmarks covering CuTTY, vtebench, and Kitty workloads
+
+### Changed
+
+- Improved terminal rendering performance by batching glyphs, coalescing background fills,
+  skipping empty-cell shaping, retaining renderer allocations, and prioritizing layout cache hits
+
 ## 0.18.6
 
 ### Fixed

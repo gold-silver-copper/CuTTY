@@ -32,7 +32,7 @@ use crate::config::window::Dimensions;
 use crate::config::window::StartupMode;
 use crate::display::bell::VisualBell;
 use crate::display::color::{List, Rgb};
-use crate::display::content::{RenderableContent, RenderableCursor};
+use crate::display::content::{RenderableCell, RenderableContent, RenderableCursor};
 use crate::display::cursor::IntoRects;
 use crate::display::damage::{DamageTracker, damage_y_to_viewport_y};
 use crate::display::hint::{HintMatch, HintState};
@@ -55,6 +55,8 @@ pub mod hint;
 pub mod window;
 
 mod bell;
+#[cfg(test)]
+mod bench;
 mod damage;
 mod meter;
 mod rects;
@@ -301,8 +303,103 @@ pub struct Display {
 
     hint_mouse_point: Option<Point>,
     scene_renderer: SceneRenderer,
+    scene: Scene,
+    render_cells: Vec<RenderableCell>,
+    glyph_batch: GlyphBatch,
     text_system: TextSystem,
     meter: Meter,
+}
+
+#[derive(Default)]
+struct GlyphBatch {
+    font: Option<parley::FontData>,
+    font_size_bits: u32,
+    normalized_coords: Vec<i16>,
+    color: Rgb,
+    origin_x: f32,
+    origin_y: f32,
+    absolute_positions: bool,
+    glyphs: Vec<Glyph>,
+}
+
+impl GlyphBatch {
+    fn reset(&mut self) {
+        self.font = None;
+        self.normalized_coords.clear();
+        self.glyphs.clear();
+        self.absolute_positions = false;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push(
+        &mut self,
+        scene: &mut Scene,
+        font: &parley::FontData,
+        font_size: f32,
+        normalized_coords: &[i16],
+        color: Rgb,
+        origin_x: f32,
+        origin_y: f32,
+        glyphs: impl IntoIterator<Item = Glyph>,
+    ) {
+        let compatible = self.font.as_ref().is_some_and(|current| {
+            current.index == font.index
+                && current.data.id() == font.data.id()
+                && self.font_size_bits == font_size.to_bits()
+                && self.normalized_coords == normalized_coords
+                && self.color == color
+        });
+
+        if !compatible {
+            self.flush(scene);
+            self.font = Some(font.clone());
+            self.font_size_bits = font_size.to_bits();
+            self.normalized_coords.clear();
+            self.normalized_coords.extend_from_slice(normalized_coords);
+            self.color = color;
+            self.origin_x = origin_x;
+            self.origin_y = origin_y;
+            self.absolute_positions = false;
+            self.glyphs.extend(glyphs);
+            return;
+        }
+
+        if !self.absolute_positions {
+            for glyph in &mut self.glyphs {
+                glyph.x += self.origin_x;
+                glyph.y += self.origin_y;
+            }
+            self.absolute_positions = true;
+        }
+        self.glyphs.extend(glyphs.into_iter().map(|mut glyph| {
+            glyph.x += origin_x;
+            glyph.y += origin_y;
+            glyph
+        }));
+    }
+
+    fn flush(&mut self, scene: &mut Scene) {
+        if self.glyphs.is_empty() {
+            return;
+        }
+
+        let font = self.font.as_ref().expect("glyph batches always have a font");
+        let brush = vello::peniko::Brush::Solid(color_from_rgb(self.color));
+        let transform = if self.absolute_positions {
+            Affine::IDENTITY
+        } else {
+            Affine::translate((self.origin_x as f64, self.origin_y as f64))
+        };
+        scene
+            .draw_glyphs(font)
+            .brush(&brush)
+            .hint(false)
+            .transform(transform)
+            .font_size(f32::from_bits(self.font_size_bits))
+            .normalized_coords(&self.normalized_coords)
+            .draw(Fill::NonZero, self.glyphs.iter().copied());
+        self.glyphs.clear();
+    }
 }
 
 impl Display {
@@ -389,6 +486,9 @@ impl Display {
             font_size,
             hint_mouse_point: Default::default(),
             scene_renderer,
+            scene: Scene::new(),
+            render_cells: Vec::new(),
+            glyph_batch: GlyphBatch::default(),
             text_system,
             meter: Default::default(),
         })
@@ -483,8 +583,9 @@ impl Display {
         config: &UiConfig,
         search_state: &mut SearchState,
     ) {
+        let mut grid_cells = std::mem::take(&mut self.render_cells);
+        grid_cells.clear();
         let mut content = RenderableContent::new(config, self, &terminal, search_state);
-        let mut grid_cells = Vec::new();
         for cell in &mut content {
             grid_cells.push(cell);
         }
@@ -535,9 +636,8 @@ impl Display {
             self.highlighted_hint.is_some() || self.vi_highlighted_hint.is_some();
         let highlighted_hint = self.highlighted_hint.clone();
         let vi_highlighted_hint = self.vi_highlighted_hint.clone();
-        let mut prepared_cells = Vec::with_capacity(grid_cells.len());
 
-        for mut cell in grid_cells {
+        for cell in &mut grid_cells {
             if has_highlighted_hint {
                 let point = term::viewport_to_point(display_offset, cell.point);
                 let hyperlink = cell.extra.as_ref().and_then(|extra| extra.hyperlink.as_ref());
@@ -550,20 +650,19 @@ impl Display {
                 }
             }
 
-            lines.update(&cell);
-            prepared_cells.push(cell);
+            lines.update(cell);
         }
 
-        let mut scene = Scene::new();
+        let mut scene = std::mem::take(&mut self.scene);
+        scene.reset();
 
         let render_start = Instant::now();
         {
             let text_system = &mut self.text_system;
+            let glyph_batch = &mut self.glyph_batch;
 
-            for cell in &prepared_cells {
-                Self::paint_cell_background(&mut scene, cell, size_info);
-                Self::paint_cell_text(&mut scene, text_system, size_info, cell);
-            }
+            Self::paint_cell_backgrounds(&mut scene, &grid_cells, size_info);
+            Self::paint_cell_texts(&mut scene, glyph_batch, text_system, size_info, &grid_cells);
 
             let mut rects = lines.rects(&metrics, &size_info);
 
@@ -697,6 +796,8 @@ impl Display {
         if let Err(err) = self.scene_renderer.render(&scene, base_color) {
             warn!("{err}");
         }
+        self.scene = scene;
+        self.render_cells = grid_cells;
 
         self.request_frame(scheduler);
         self.damage_tracker.swap_damage();
@@ -769,11 +870,8 @@ impl Display {
         dirty
     }
 
-    fn paint_cell_background(
-        scene: &mut Scene,
-        cell: &crate::display::content::RenderableCell,
-        size: SizeInfo,
-    ) {
+    #[cfg(test)]
+    fn paint_cell_background(scene: &mut Scene, cell: &RenderableCell, size: SizeInfo) {
         if cell.bg_alpha <= 0.0 {
             return;
         }
@@ -796,11 +894,69 @@ impl Display {
         paint_rect(scene, &rect);
     }
 
+    fn paint_cell_backgrounds(
+        scene: &mut Scene,
+        cells: &[RenderableCell],
+        size: SizeInfo,
+    ) -> usize {
+        let mut pending: Option<RenderRect> = None;
+        let mut fills = 0;
+
+        for cell in cells {
+            if cell.bg_alpha <= 0.0 {
+                if let Some(rect) = pending.take() {
+                    paint_rect(scene, &rect);
+                    fills += 1;
+                }
+                continue;
+            }
+
+            let column = cell.point.column.0 as f32;
+            let line = cell.point.line as f32;
+            let width_cells = if cell.flags.contains(Flags::WIDE_CHAR) { 2.0 } else { 1.0 };
+            let x0 = snap_cell_edge(column, size.cell_width());
+            let x1 = snap_cell_edge(column + width_cells, size.cell_width());
+            let y0 = snap_cell_edge(line, size.cell_height());
+            let y1 = snap_cell_edge(line + 1.0, size.cell_height());
+            let rect = RenderRect::new(
+                size.padding_x() + x0,
+                size.padding_y() + y0,
+                x1 - x0,
+                y1 - y0,
+                cell.bg,
+                cell.bg_alpha,
+            );
+
+            let extends_pending = pending.as_ref().is_some_and(|pending| {
+                pending.y == rect.y
+                    && pending.height == rect.height
+                    && pending.x + pending.width == rect.x
+                    && pending.color == rect.color
+                    && pending.alpha.to_bits() == rect.alpha.to_bits()
+            });
+            if extends_pending {
+                pending.as_mut().unwrap().width += rect.width;
+            } else {
+                if let Some(pending) = pending.replace(rect) {
+                    paint_rect(scene, &pending);
+                    fills += 1;
+                }
+            }
+        }
+
+        if let Some(rect) = pending {
+            paint_rect(scene, &rect);
+            fills += 1;
+        }
+
+        fills
+    }
+
     fn paint_cell_text(
         scene: &mut Scene,
         text_system: &mut TextSystem,
         size: SizeInfo,
-        cell: &crate::display::content::RenderableCell,
+        cell: &RenderableCell,
     ) {
         let Some(layout) = text_system.shape_cell(cell) else {
             return;
@@ -814,6 +970,109 @@ impl Display {
             cell.point.column.0,
             cell.fg,
         );
+    }
+
+    fn paint_cell_texts(
+        scene: &mut Scene,
+        glyph_batch: &mut GlyphBatch,
+        text_system: &mut TextSystem,
+        size: SizeInfo,
+        cells: &[RenderableCell],
+    ) {
+        glyph_batch.reset();
+        let mut pending = None;
+        let mut batching = false;
+
+        for cell in cells.iter().filter(|cell| cell_has_visible_text(cell)) {
+            if batching {
+                let previous = pending.expect("a batch always has a previous cell");
+                if cells_have_compatible_text_style(previous, cell) {
+                    Self::batch_cell_text(scene, glyph_batch, text_system, size, cell);
+                    pending = Some(cell);
+                } else {
+                    glyph_batch.flush(scene);
+                    pending = Some(cell);
+                    batching = false;
+                }
+            } else if let Some(previous) = pending {
+                if cells_have_compatible_text_style(previous, cell) {
+                    Self::batch_cell_text(scene, glyph_batch, text_system, size, previous);
+                    Self::batch_cell_text(scene, glyph_batch, text_system, size, cell);
+                    pending = Some(cell);
+                    batching = true;
+                } else {
+                    Self::paint_cell_text(scene, text_system, size, previous);
+                    pending = Some(cell);
+                }
+            } else {
+                pending = Some(cell);
+            }
+        }
+
+        if !batching && let Some(cell) = pending {
+            Self::paint_cell_text(scene, text_system, size, cell);
+        }
+        glyph_batch.flush(scene);
+    }
+
+    fn batch_cell_text(
+        scene: &mut Scene,
+        glyph_batch: &mut GlyphBatch,
+        text_system: &mut TextSystem,
+        size: SizeInfo,
+        cell: &RenderableCell,
+    ) {
+        let Some(layout) = text_system.shape_cell(cell) else {
+            return;
+        };
+        Self::batch_layout(
+            scene,
+            glyph_batch,
+            &layout,
+            text_system.metrics(),
+            size,
+            cell.point.line,
+            cell.point.column.0,
+            cell.fg,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn batch_layout(
+        scene: &mut Scene,
+        glyph_batch: &mut GlyphBatch,
+        layout: &parley::Layout<()>,
+        metrics: TextMetrics,
+        size: SizeInfo,
+        line: usize,
+        column: usize,
+        fg: Rgb,
+    ) {
+        let origin_x =
+            size.padding_x() + column as f32 * size.cell_width() + metrics.glyph_offset_x;
+        let origin_y = size.padding_y() + line as f32 * size.cell_height() + metrics.glyph_offset_y;
+
+        for line in layout.lines() {
+            for item in line.items() {
+                let parley::layout::PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                    continue;
+                };
+
+                let run = glyph_run.run();
+                let mut x = glyph_run.offset();
+                let y = glyph_run.baseline();
+                glyph_batch.push(
+                    scene,
+                    run.font(),
+                    run.font_size(),
+                    run.normalized_coords(),
+                    fg,
+                    origin_x,
+                    origin_y,
+                    glyph_run.glyphs().map(|glyph| scene_glyph_from_layout(&mut x, y, glyph)),
+                );
+            }
+        }
     }
 
     fn paint_layout(
@@ -1175,6 +1434,24 @@ impl Display {
     }
 }
 
+#[inline]
+fn cell_has_visible_text(cell: &RenderableCell) -> bool {
+    if cell.flags.contains(Flags::HIDDEN) || cell.character == '\t' {
+        return false;
+    }
+
+    cell.character != ' '
+        || cell.extra.as_ref().and_then(|extra| extra.zerowidth.as_ref()).is_some()
+}
+
+#[inline]
+fn cells_have_compatible_text_style(first: &RenderableCell, second: &RenderableCell) -> bool {
+    const FONT_STYLE_FLAGS: Flags =
+        Flags::from_bits_retain(Flags::BOLD.bits() | Flags::DIM_BOLD.bits() | Flags::ITALIC.bits());
+
+    first.fg == second.fg && first.flags & FONT_STYLE_FLAGS == second.flags & FONT_STYLE_FLAGS
+}
+
 fn scene_glyph_from_layout(
     cursor_x: &mut f32,
     baseline: f32,
@@ -1195,7 +1472,15 @@ fn text_cell_width(text: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{scene_glyph_from_layout, text_cell_width};
+    use cutty_terminal::index::{Column, Point};
+    use cutty_terminal::term::cell::Flags;
+    use vello::Scene;
+
+    use super::color::Rgb;
+    use super::content::RenderableCell;
+    use super::text::TextSystem;
+    use super::{Display, GlyphBatch, SizeInfo, scene_glyph_from_layout, text_cell_width};
+    use crate::config::font::Font;
 
     #[test]
     fn scene_glyphs_use_baseline_relative_y_coordinates() {
@@ -1215,6 +1500,115 @@ mod tests {
         assert_eq!(text_cell_width("abc"), 3);
         assert_eq!(text_cell_width("今a"), 3);
         assert_eq!(text_cell_width(""), 0);
+    }
+
+    #[test]
+    fn adjacent_matching_backgrounds_are_coalesced() {
+        let size = SizeInfo::new(800.0, 480.0, 10.0, 20.0, 0.0, 0.0, false);
+        let background = Rgb::new(20, 30, 40);
+        let cells = vec![
+            renderable_cell(0, 0, 'a', background, 1.0, Flags::empty()),
+            renderable_cell(0, 1, 'b', background, 1.0, Flags::empty()),
+            renderable_cell(0, 2, 'c', background, 1.0, Flags::empty()),
+        ];
+        let mut scene = Scene::new();
+
+        let fills = Display::paint_cell_backgrounds(&mut scene, &cells, size);
+
+        assert_eq!(fills, 1);
+        assert_eq!(scene.encoding().n_paths, 1);
+    }
+
+    #[test]
+    fn background_coalescing_respects_gaps_and_color_boundaries() {
+        let size = SizeInfo::new(800.0, 480.0, 10.0, 20.0, 0.0, 0.0, false);
+        let first = Rgb::new(20, 30, 40);
+        let second = Rgb::new(40, 30, 20);
+        let cells = vec![
+            renderable_cell(0, 0, 'a', first, 1.0, Flags::empty()),
+            renderable_cell(0, 1, ' ', first, 0.0, Flags::empty()),
+            renderable_cell(0, 2, 'b', first, 1.0, Flags::empty()),
+            renderable_cell(0, 3, 'c', second, 1.0, Flags::empty()),
+        ];
+        let mut scene = Scene::new();
+
+        let fills = Display::paint_cell_backgrounds(&mut scene, &cells, size);
+
+        assert_eq!(fills, 3);
+        assert_eq!(scene.encoding().n_paths, 3);
+    }
+
+    #[test]
+    fn compatible_cell_glyphs_share_one_vello_draw_call() {
+        let mut text = TextSystem::new(Font::default());
+        let metrics = text.metrics();
+        let size = SizeInfo::new(
+            metrics.cell_width * 80.0,
+            metrics.cell_height * 24.0,
+            metrics.cell_width,
+            metrics.cell_height,
+            0.0,
+            0.0,
+            false,
+        );
+        let cells = vec![
+            renderable_cell(0, 0, 'a', Rgb::default(), 0.0, Flags::empty()),
+            renderable_cell(0, 1, 'b', Rgb::default(), 0.0, Flags::empty()),
+            renderable_cell(0, 2, 'c', Rgb::default(), 0.0, Flags::empty()),
+        ];
+        let mut scene = Scene::new();
+        let mut batch = GlyphBatch::default();
+
+        Display::paint_cell_texts(&mut scene, &mut batch, &mut text, size, &cells);
+
+        assert_eq!(scene.encoding().resources.glyph_runs.len(), 1);
+        assert_eq!(scene.encoding().resources.glyphs.len(), 3);
+    }
+
+    #[test]
+    fn glyph_batching_respects_foreground_color_boundaries() {
+        let mut text = TextSystem::new(Font::default());
+        let metrics = text.metrics();
+        let size = SizeInfo::new(
+            metrics.cell_width * 80.0,
+            metrics.cell_height * 24.0,
+            metrics.cell_width,
+            metrics.cell_height,
+            0.0,
+            0.0,
+            false,
+        );
+        let mut cells = vec![
+            renderable_cell(0, 0, 'a', Rgb::default(), 0.0, Flags::empty()),
+            renderable_cell(0, 1, 'b', Rgb::default(), 0.0, Flags::empty()),
+        ];
+        cells[1].fg = Rgb::new(255, 0, 0);
+        let mut scene = Scene::new();
+        let mut batch = GlyphBatch::default();
+
+        Display::paint_cell_texts(&mut scene, &mut batch, &mut text, size, &cells);
+
+        assert_eq!(scene.encoding().resources.glyph_runs.len(), 2);
+    }
+
+    fn renderable_cell(
+        line: usize,
+        column: usize,
+        character: char,
+        bg: Rgb,
+        bg_alpha: f32,
+        flags: Flags,
+    ) -> RenderableCell {
+        RenderableCell {
+            character,
+            point: Point::new(line, Column(column)),
+            fg: Rgb::new(240, 240, 240),
+            bg,
+            bg_alpha,
+            underline: Rgb::new(240, 240, 240),
+            flags,
+            extra: None,
+        }
     }
 }
 
